@@ -7,13 +7,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.mission_id = self.scope['url_route']['kwargs']['mission_id']
         self.room_group_name = f'chat_{self.mission_id}'
+        user = self.scope['user']
 
-        # Rejoindre le groupe de la mission
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
+        # Vérification d'accès
+        if not await self.is_member_of_mission(user):
+            await self.close()
+            return
+
+        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+
+    @database_sync_to_async
+    def is_member_of_mission(self, user):
+        from apps.missions.models import Mission
+        try:
+            mission = Mission.objects.get(id=self.mission_id)
+            return user == mission.client or user == mission.agent
+        except Mission.DoesNotExist:
+            return False    
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(
@@ -23,21 +34,34 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-        content = data['message']
+        event_type = data.get('type', 'message')  # On récupère le type d'événement
         sender = self.scope['user']
 
-        # Sauvegarder en base de données
-        await self.save_message(sender, content)
+        if event_type == 'message':
+            content = data['message']
+            # 1. Sauvegarder dans PostgreSQL
+            await self.save_message(sender, content)
+            
+            # 2. Diffuser le message à la "room"
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'chat_message',
+                    'message': content,
+                    'sender': sender.username,
+                }
+            )
 
-        # Envoyer le message au groupe
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'message': content,
-                'sender': sender.username,
-            }
-        )
+        elif event_type == 'typing':
+            # On ne sauvegarde pas en base, on diffuse juste l'info en direct
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'user_typing',
+                    'sender': sender.username,
+                    'is_typing': data.get('is_typing', True)
+                }
+            )
 
     async def chat_message(self, event):
         # Envoi effectif vers le WebSocket (Flutter)
@@ -46,6 +70,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'sender': event['sender']
         }))
 
+    async def user_typing(self, event):
+        """Transmet l'état 'en train d'écrire' à l'autre utilisateur"""
+        await self.send(text_data=json.dumps({
+            'type': 'typing',
+            'sender': event['sender'],
+            'is_typing': event['is_typing']
+        }))
+        
     @database_sync_to_async
     def save_message(self, sender, content):
         from apps.missions.models import Mission

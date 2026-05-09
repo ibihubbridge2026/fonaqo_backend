@@ -189,6 +189,7 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
+
 FIREBASE_KEY_PATH = os.path.join(BASE_DIR, 'firebase-auth.json')
 
 # Initialisation de Firebase
