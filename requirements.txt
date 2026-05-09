@@ -73,3 +73,4 @@ sentry-sdk
 django-simple-history
 djangorestframework-simplejwt
 drf-spectacular
+faker

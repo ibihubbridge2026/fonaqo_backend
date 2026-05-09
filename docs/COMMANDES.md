@@ -74,3 +74,32 @@ Ce document est ta référence pour installer, piloter et maintenir le backend F
 
 celery -A config beat --loglevel=info
 celery -A config worker --loglevel=info
+
+docker compose up -d #ceci demarre 
+docker compose ps  #dis si cest ok up
+docker compose stop # arrete tous 
+
+#por le css dans docker
+docker compose exec web python manage.py collectstatic --noinput
+
+#cache
+docker compose restart web
+
+#logs
+docker compose logs -f web
+
+#modification mo de passe
+docker compose exec web python manage.py changepassword 0195748884
+
+docker compose exec web python manage.py shell
+
+from apps.accounts.models import User
+# On cherche l'utilisateur par son téléphone
+u = User.objects.get(phone_number="0195748884")
+u.set_password("ton_nouveau_mot_de_passe")
+u.save()
+exit()
+
+
+docker compose exec web python manage.py seed_data
+password123
