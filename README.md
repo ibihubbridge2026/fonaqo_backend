@@ -11,7 +11,7 @@ Backend officiel de **FONAQO**, une plateforme intelligente de services terrain 
 
 ---
 
-# 🚀 Vision
+# Vision
 
 FONAQO digitalise les services de proximité en Afrique en combinant :
 
@@ -26,9 +26,9 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-# 🧠 Core Features
+# Core Features
 
-## 👤 Accounts & Authentication
+## Accounts & Authentication
 
 - JWT Authentication
 - UUID-based users
@@ -43,7 +43,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-## 📍 Missions System
+## Missions System
 
 - Geolocation with PostGIS
 - Nearby mission discovery
@@ -57,7 +57,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-## 💰 Wallet & Escrow
+## Wallet & Escrow
 
 - Wallet system
 - Escrow balance management
@@ -70,7 +70,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-## 💬 Real-time Chat
+## Real-time Chat
 
 - Django Channels + WebSockets
 - Direct conversations
@@ -81,7 +81,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-## 🔔 Notifications
+## Notifications
 
 - Firebase Cloud Messaging (FCM)
 - Real-time alerts
@@ -91,7 +91,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-## 🛡️ Security
+## Security
 
 - Role-based permissions
 - Audit logging
@@ -102,7 +102,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-# 🏗️ Tech Stack
+# Tech Stack
 
 ## Backend
 - Python
@@ -133,7 +133,7 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 
 ---
 
-# 📦 Project Structure
+# Project Structure
 
 ```txt
 fonaqo_backend/
@@ -215,7 +215,7 @@ ALLOWED_HOSTS=127.0.0.1,localhost
 
 ---
 
-# 🗄️ PostgreSQL + PostGIS
+# PostgreSQL + PostGIS
 
 ```sql
 CREATE DATABASE fonaqo;
@@ -225,19 +225,19 @@ CREATE EXTENSION postgis;
 
 ---
 
-# 🔥 Run Migrations
+# Run Migrations
 
 ```bash
 python manage.py migrate
 ```
 
-# 👤 Create Superuser
+# Create Superuser
 
 ```bash
 python manage.py createsuperuser
 ```
 
-# 🚀 Run Server
+# Run Server
 
 ```bash
 python manage.py runserver
@@ -257,7 +257,7 @@ celery -A config worker -l info
 
 ---
 
-# 🌐 API Structure
+# API Structure
 
 ```txt
 /api/v1/auth/
@@ -271,7 +271,7 @@ celery -A config worker -l info
 
 ---
 
-# 🔐 Authentication
+# Authentication
 
 ```http
 Authorization: Bearer your_access_token
@@ -279,7 +279,7 @@ Authorization: Bearer your_access_token
 
 ---
 
-# 📍 Mission Workflow
+# Mission Workflow
 
 ```txt
 Mission Created
@@ -303,7 +303,7 @@ Wallet Credited
 
 ---
 
-# 🧠 AI-Ready Architecture
+# AI-Ready Architecture
 
 The backend is structured to support:
 - smart service search
@@ -314,7 +314,7 @@ The backend is structured to support:
 
 ---
 
-# 📊 Admin Dashboard
+# Admin Dashboard
 
 Features:
 - revenue tracking
@@ -326,7 +326,7 @@ Features:
 
 ---
 
-# 📱 Mobile App
+# Mobile App
 
 Frontend mobile application is built with:
 - Flutter
@@ -336,7 +336,7 @@ Frontend mobile application is built with:
 
 ---
 
-# 🔮 Future Improvements
+# Future Improvements
 
 - AI-powered mission matching
 - Voice-based search
@@ -348,7 +348,7 @@ Frontend mobile application is built with:
 
 ---
 
-# 🛠️ Development Status
+# Development Status
 
 ## Current Status
 Backend Core Architecture Completed ✅
@@ -373,7 +373,7 @@ Backend Core Architecture Completed ✅
 
 ---
 
-# 🤝 Contributing
+# Contributing
 
 1. Fork repository
 2. Create feature branch
@@ -382,6 +382,6 @@ Backend Core Architecture Completed ✅
 
 ---
 
-# 📄 License
+# License
 
 Private
