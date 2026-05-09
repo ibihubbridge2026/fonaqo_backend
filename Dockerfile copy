@@ -1,0 +1,34 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Installation des dépendances système pour PostGIS et la compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gdal-bin \
+    libgdal-dev \
+    libproj-dev \
+    libpq-dev \
+    python3-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fix pour GDAL (important pour Django GIS)
+ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
+ENV C_INCLUDE_PATH=/usr/include/gdal
+
+# Copie et installation des dépendances
+# Assure-toi que le chemin correspond à ton projet
+COPY requirements/base.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copie tout le projet
+COPY . /app
+
+EXPOSE 8000
+
+# On utilise python -m daphne pour être sûr du PATH
+CMD ["python", "-m", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]

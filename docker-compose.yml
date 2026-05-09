@@ -27,7 +27,8 @@ services:
 
   web:
     build: .
-    command: sh -c "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    # Utilisation de python -m daphne pour éviter l'erreur 'command not found'
+    command: sh -c "python manage.py migrate && python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application"
     env_file:
       - .env
     volumes:
@@ -42,7 +43,7 @@ services:
 
   worker:
     build: .
-    command: celery -A config worker -l info
+    command: python -m celery -A config worker -l info
     env_file:
       - .env
     volumes:
@@ -55,7 +56,7 @@ services:
 
   beat:
     build: .
-    command: celery -A config beat -l info
+    command: python -m celery -A config beat -l info
     env_file:
       - .env
     volumes:

@@ -1,25 +1,22 @@
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Dépendances système pour PostGIS et Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    gdal-bin \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    build-essential \
-    gdal-bin \
-    libgdal-dev \
-    libproj-dev \
-    libpq-dev \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Copie et installation forcée
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-COPY requirements/base.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Copie du code
+COPY . .
 
-COPY . /app
+# On s'assure que les scripts sont exécutables
+RUN chmod +x /app/manage.py
 
 EXPOSE 8000
-
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]

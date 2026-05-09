@@ -28,4 +28,4 @@ celerybeat-schedule-wal
 
 # --- Système ---
 .DS_Store
-Thumbs.db
+Thumbs.db.pytest_cache/

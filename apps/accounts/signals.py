@@ -7,18 +7,25 @@ from apps.wallets.models import Wallet
 
 @receiver(pre_save, sender=User)
 def notify_agent_verification(sender, instance, **kwargs):
-    if instance.pk:
-        # On récupère la version actuelle en base de données avant la sauvegarde
-        old_user = User.objects.get(pk=instance.pk)
-        
-        # Si is_verified passe de False à True
-        if not old_user.is_verified and instance.is_verified:
-            NotificationService.send_to_user(
-                user=instance,
-                title="Compte vérifié ! ",
-                body="Félicitations, votre profil agent a été validé. Vous pouvez dès maintenant accepter des missions.",
-                data={"type": "KYC_SUCCESS"}
-            )
+    # Si l'instance n'a pas de PK ou n'est pas encore en base, c'est une création
+    if not instance.pk:
+        return
+
+    try:
+        # On tente de récupérer l'ancienne version
+        old_user = sender.objects.get(pk=instance.pk)
+    except sender.DoesNotExist:
+        # L'utilisateur est en cours de création, donc pas de "old_user"
+        return
+    
+    # Logique de vérification (is_verified passe de False à True)
+    if not old_user.is_verified and instance.is_verified:
+        NotificationService.send_to_user(
+            user=instance,
+            title="Compte vérifié ! 🚀",
+            body="Félicitations, votre profil agent a été validé.",
+            data={"type": "KYC_SUCCESS"}
+        )
 
 @receiver(post_save, sender=User)
 def create_user_wallet_and_referral(sender, instance, created, **kwargs):
