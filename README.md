@@ -136,30 +136,22 @@ FONAQO digitalise les services de proximité en Afrique en combinant :
 # Project Structure
 
 ```txt
-fonaqo_backend/
-│
+fonaqo_back/
 ├── apps/
-│   ├── accounts/
-│   ├── missions/
-│   ├── wallet/
-│   ├── payments/
-│   ├── services/
-│   ├── chat/
-│   ├── notifications/
-│   ├── boosts/
-│   ├── analytics/
-│   ├── disputes/
-│   └── common/
-│
-├── config/
-│
-├── requirements/
-│
-├── media/
-├── static/
-│
+│   ├── accounts/       # Auth, KYC, Niveaux
+│   ├── missions/       # Missions, Timeline, Boosts, Disputes, Tags
+│   ├── wallet/         # Portefeuille & Escrow (ou séparés)
+│   ├── services/       # Catégories & Offres agents
+│   ├── chat/           # WebSockets & Messages
+│   └── notifications/  # Firebase Cloud Messaging
+├── config/             # settings.py, asgi.py, wsgi.py
+├── templates/          # Admin Dashboard HTML
+├── media/              # (Photos stockées ici)
+├── static/             # (Fichiers statiques admin)
+├── requirements/       # base.txt
 ├── manage.py
-└── README.md
+└── .gitignore          
+
 ```
 
 ---

@@ -150,15 +150,43 @@ CHANNEL_LAYERS = {
 }
 
 REST_FRAMEWORK = {
+
+    # 1. PAGINATION (Point 1)
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 10,
+
+    # 2. FILTERING & SEARCH (Point 2 & 3)
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+
+    # 3. DOCUMENTATION (Swagger - Étape 3)
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+
+    # 4. AUTHENTICATION & THROTTLING
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    # 5. THROTTLING (Point 4)
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle'
     ],
+    # 6. THROTTLING RATES (Point 4)
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/day',   # Limite pour les utilisateurs non connectés
         'user': '1000/day',  # Limite pour les clients/agents connectés
         'burst': '10/minute', # Protection contre le spam rapide
     }
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "FONAQO API",
+    "DESCRIPTION": "Backend for Mission & Services Platform",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 FIREBASE_KEY_PATH = os.path.join(BASE_DIR, 'firebase-auth.json')
