@@ -1,3 +1,4 @@
+from django.db.models.signals import post_save
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from .models import User
@@ -14,7 +15,7 @@ def notify_agent_verification(sender, instance, **kwargs):
         if not old_user.is_verified and instance.is_verified:
             NotificationService.send_to_user(
                 user=instance,
-                title="Compte vérifié ! 🎉",
+                title="Compte vérifié ! ",
                 body="Félicitations, votre profil agent a été validé. Vous pouvez dès maintenant accepter des missions.",
                 data={"type": "KYC_SUCCESS"}
             )

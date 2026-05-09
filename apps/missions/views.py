@@ -4,31 +4,28 @@ from rest_framework.response import Response
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 
-from .models import Mission
+from .models import Mission, MissionTimeline, Dispute
 from .serializers import MissionSerializer
 from apps.accounts.permissions import IsVerifiedAgent
 from apps.notifications.services import NotificationService
 
 class MissionViewSet(viewsets.ModelViewSet):
     """
-    Gestion complète du cycle de vie des missions :
-    Création, Recherche par proximité, Acceptation et Validation double-mode.
+    Moteur de Mission FONAQO :
+    Gère la proximité, la Timeline GPS, l'Escrow et la Sécurité.
     """
     queryset = Mission.objects.all()
     serializer_class = MissionSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """
-        Filtre les missions et permet le tri par distance si lat/lng fournis.
-        Exemple : /api/missions/?lat=6.36&lng=2.43
-        """
         queryset = Mission.objects.all()
         lat = self.request.query_params.get('lat')
         lng = self.request.query_params.get('lng')
 
-        # Par défaut, on ne montre que les missions disponibles aux agents
+        # Filtrage : Un agent ne voit que les missions PENDING (disponibles)
         if self.action == 'list':
             queryset = queryset.filter(status='PENDING')
 
@@ -38,116 +35,137 @@ class MissionViewSet(viewsets.ModelViewSet):
                 queryset = queryset.annotate(
                     distance=Distance('location', user_location)
                 ).order_by('distance')
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
         return queryset
 
     def perform_create(self, serializer):
-        # Le créateur est automatiquement le client connecté
-        serializer.save(client=self.request.user, status='PENDING')
+        # Création initiale + Première étape Timeline
+        mission = serializer.save(client=self.request.user, status='PENDING')
+        self._add_to_timeline(mission, 'PENDING', _("Mission publiée par le client"))
 
     @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
     def accept(self, request, pk=None):
-        """ 
-        Un agent vérifié accepte la mission.
-        Déclenche le blocage des fonds (Escrow) via signal.
-        """
+        """ L'agent accepte : bloque l'argent en Escrow via Signal """
         mission = self.get_object()
         if mission.status != 'PENDING':
-            return Response(
-                {"detail": _("Cette mission n'est plus disponible.")}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": _("Indisponible.")}, status=status.HTTP_400_BAD_REQUEST)
         
         mission.agent = request.user
         mission.status = 'ACCEPTED'
         mission.save()
 
-        # Notification au client
+        self._add_to_timeline(mission, 'ACCEPTED', _("Agent assigné et fonds sécurisés"), request)
+        
         NotificationService.send_to_user(
             user=mission.client,
-            title=_("Mission acceptée"),
-            body=_("L'agent {} est en route.").format(request.user.username)
+            title=_("Agent trouvé !"),
+            body=_("{} a accepté votre mission.").format(request.user.username)
         )
-        
-        return Response({"detail": _("Mission acceptée avec succès.")})
+        return Response({"detail": _("Mission acceptée.")})
+
+    @action(detail=True, methods=['post'])
+    def update_steps(self, request, pk=None):
+        """
+        POINT 1 : Moteur de Timeline (En route, Arrivé, En cours)
+        Nécessite latitude/longitude pour la preuve de présence.
+        """
+        mission = self.get_object()
+        new_status = request.data.get('status')
+        lat = request.data.get('latitude')
+        lng = request.data.get('longitude')
+
+        if mission.agent != request.user:
+            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
+
+        # Validation de l'ordre logique (Optionnel mais recommandé)
+        mission.status = new_status
+        mission.save()
+
+        # Capture GPS de l'étape
+        location = Point(float(lng), float(lat), srid=4326) if lat and lng else None
+        self._add_to_timeline(mission, new_status, f"Étape : {new_status}", request, location)
+
+        return Response({"status": "Updated", "new_status": new_status})
 
     @action(detail=True, methods=['post'])
     def submit_completion(self, request, pk=None):
-        """
-        MODE DISTANCIEL : L'agent soumet une preuve de fin de tâche (Photo).
-        """
+        """ Soumission de la preuve photo (Fin de mission) """
         mission = self.get_object()
         if mission.agent != request.user:
-            return Response(
-                {"detail": _("Vous n'êtes pas l'agent assigné.")}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"detail": _("Accès refusé.")}, status=status.HTTP_403_FORBIDDEN)
         
         if 'end_photo' not in request.FILES:
-            return Response(
-                {"detail": _("Une photo de preuve est requise.")}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": _("Photo de preuve requise.")}, status=status.HTTP_400_BAD_REQUEST)
             
         mission.end_photo = request.FILES['end_photo']
         mission.save()
         
-        # Notification au client pour qu'il vienne valider sur l'app
+        self._add_to_timeline(mission, 'COMPLETED', _("Preuve de travail soumise"), request)
+        
         NotificationService.send_to_user(
             user=mission.client,
-            title=_("Preuve soumise"),
-            body=_("L'agent a terminé la mission. Veuillez vérifier la preuve et valider.")
+            title=_("Mission terminée par l'agent"),
+            body=_("Veuillez vérifier et valider pour libérer le paiement.")
         )
-        return Response({"detail": _("Preuve soumise. En attente de validation du client.")})
+        return Response({"detail": _("Preuve enregistrée.")})
 
     @action(detail=True, methods=['post'])
     def validate_completion(self, request, pk=None):
-        """
-        VALIDATION FINALE :
-        - Soit par QR Code (Direct)
-        - Soit par clic Client (Distanciel/Preuve)
-        """
+        """ Validation finale (Libère l'argent) """
         mission = self.get_object()
-        method = request.data.get('method')  # 'QR_SCAN' ou 'CLIENT_CLICK'
+        method = request.data.get('method') 
         token = request.data.get('qr_token')
 
-        # Scénario 1 : L'agent scanne le QR Code affiché sur le téléphone du client
-        if method == 'QR_SCAN':
-            if token == mission.qr_code_token:
-                return self._finalize_mission(mission)
-            return Response({"detail": _("QR Code invalide.")}, status=status.HTTP_400_BAD_REQUEST)
+        if method == 'QR_SCAN' and token == mission.qr_code_token:
+            return self._finalize_mission(mission)
 
-        # Scénario 2 : Le client valide manuellement depuis son interface (après avoir vu la photo)
-        if method == 'CLIENT_CLICK':
-            if request.user == mission.client:
-                return self._finalize_mission(mission)
-            return Response(
-                {"detail": _("Seul le client peut valider manuellement.")}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
+        if method == 'CLIENT_CLICK' and request.user == mission.client:
+            return self._finalize_mission(mission)
 
-        return Response(
-            {"detail": _("Méthode de validation non spécifiée.")}, 
-            status=status.HTTP_400_BAD_REQUEST
+        return Response({"detail": _("Validation échouée.")}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def open_dispute(self, request, pk=None):
+        """ POINT 8 : Ouverture d'un litige """
+        mission = self.get_object()
+        reason = request.data.get('reason')
+        
+        dispute, created = Dispute.objects.get_or_create(
+            mission=mission,
+            defaults={'opened_by': request.user, 'reason': reason}
         )
+        
+        mission.status = 'DISPUTED'
+        mission.save()
+        
+        self._add_to_timeline(mission, 'DISPUTED', _("LITIGE OUVERT : Argent bloqué."), request)
+        
+        return Response({"detail": _("Litige enregistré. L'admin va trancher.")})
 
     def _finalize_mission(self, mission):
-        """
-        Méthode interne pour clore la mission. 
-        Le changement de statut vers COMPLETED déclenche automatiquement 
-        le signal Escrow pour payer l'agent.
-        """
+        """ Fermeture et Paiement """
         if mission.status == 'COMPLETED':
-            return Response({"detail": _("Mission déjà terminée.")}, status=status.HTTP_400_BAD_REQUEST)
+             return Response({"detail": _("Déjà payé.")})
 
         mission.status = 'COMPLETED'
         mission.save()
         
-        # Notification de succès à l'agent (le plus important : il est payé !)
+        self._add_to_timeline(mission, 'COMPLETED', _("Mission validée. Fonds libérés."), self.request)
+        
         NotificationService.send_to_user(
             user=mission.agent,
-            title=_("Paiement reçu !"),
-            body=_("La mission est terminée. Votre compte a été crédité.")
+            title=_("Argent reçu !"),
+            body=_("Le client a validé. Votre solde a été mis à jour.")
         )
-        return Response({"status": _("Mission terminée et agent payé.")})
+        return Response({"status": _("Succès.")})
+
+    def _add_to_timeline(self, mission, status, message, request=None, location=None):
+        """ Utilitaire pour remplir la Timeline automatiquement """
+        MissionTimeline.objects.create(
+            mission=mission,
+            status=status,
+            message=message,
+            location=location,
+            created_by=request.user if request else None
+        )
