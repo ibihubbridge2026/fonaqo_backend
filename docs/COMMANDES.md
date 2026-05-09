@@ -72,34 +72,82 @@ Ce document est ta référence pour installer, piloter et maintenir le backend F
 - `/docs/FLUTTER_QUICKSTART.md` : Guide d'intégration pour l'équipe mobile.
 - `/docs/COMMANDES.md` : Ce fichier (Guide d'exploitation).
 
-celery -A config beat --loglevel=info
-celery -A config worker --loglevel=info
 
-docker compose up -d #ceci demarre 
-docker compose ps  #dis si cest ok up
-docker compose stop # arrete tous 
+# =========================
+# DOCKER - COMMANDES UTILES
+# =========================
 
-#por le css dans docker
-docker compose exec web python manage.py collectstatic --noinput
+# Démarrer tous les services
+docker compose up -d
 
-#cache
-docker compose restart web
+# Démarrer uniquement le service web
+docker compose up -d web
 
-#logs
+# Vérifier que les containers sont UP
+docker compose ps
+
+# Voir les logs du service web
 docker compose logs -f web
 
-#modification mo de passe
+# Redémarrer le service web
+docker compose restart web
+
+# Arrêter tous les services
+docker compose stop
+
+
+# =========================
+# DJANGO / STATIC FILES
+# =========================
+
+# Collecter les fichiers CSS/static
+docker compose exec web python manage.py collectstatic --noinput
+
+# Seeder des données
+docker compose exec web python manage.py seed_data password123
+
+
+# =========================
+# POSTGRESQL / PORT 5432
+# =========================
+
+# Arrêter PostgreSQL local Ubuntu
+# (utile si le port 5432 est déjà utilisé)
+sudo systemctl stop postgresql
+
+# Voir qui utilise le port 5432
+sudo lsof -i :5432
+
+# Tuer le processus qui utilise le port 5432
+sudo fuser -k 5432/tcp
+
+
+# =========================
+# DJANGO - CHANGER MOT DE PASSE
+# =========================
+
+# Méthode 1 : commande Django
 docker compose exec web python manage.py changepassword 0195748884
 
+
+# Méthode 2 : via shell Django
 docker compose exec web python manage.py shell
 
-from apps.accounts.models import User
-# On cherche l'utilisateur par son téléphone
-u = User.objects.get(phone_number="0195748884")
-u.set_password("ton_nouveau_mot_de_passe")
-u.save()
-exit()
 
 
-docker compose exec web python manage.py seed_data
-password123
+****************************************
+
+# 1. On arrête tout et on supprime les réseaux orphelins
+docker compose down --remove-orphans
+
+# 2. On nettoie les réseaux Docker inutilisés (confirme par 'y' si demandé)
+docker network prune -f
+
+# 3. On relance tout
+docker compose up -d
+
+sudo systemctl stop redis-server
+# Tue de force tout ce qui utilise le port 6379
+sudo fuser -k 6379/tcp
+
+docker compose logs -f web
