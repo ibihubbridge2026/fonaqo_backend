@@ -1,0 +1,27 @@
+# --- Sécurité & Secrets ---
+.env
+firebase-auth.json
+*.pem
+*.key
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# --- Django ---
+db.sqlite3
+db.sqlite3-journal
+media/
+static_root/
+
+# --- IDE (VS Code, PyCharm) ---
+.vscode/
+.idea/
+
+# --- Système ---
+.DS_Store
+Thumbs.db

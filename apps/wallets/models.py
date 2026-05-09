@@ -1,0 +1,77 @@
+import uuid
+from django.db import models
+from django.conf import settings
+from django.utils.translation import gettext_lazy as _
+
+class Wallet(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='wallet'
+    )
+    balance = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=0.00,
+        verbose_name=_("Solde disponible")
+    )
+    escrow_balance = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=0.00,
+        verbose_name=_("Solde en séquestre")
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Portefeuille")
+        verbose_name_plural = _("Portefeuilles")
+
+    def __str__(self):
+        return f"Wallet {self.user.phone_number} ({self.balance} FCFA)"
+
+
+class Transaction(models.Model):
+    # Approche Senior : Utilisation de TextChoices pour la clarté et l'i18n
+    class TransactionType(models.TextChoices):
+        DEPOSIT = 'DEPOSIT', _('Dépôt')
+        WITHDRAWAL = 'WITHDRAWAL', _('Retrait')
+        MISSION_PAYMENT = 'MISSION_PAYMENT', _('Paiement de mission')
+        ESCROW_LOCK = 'ESCROW_LOCK', _('Blocage Séquestre')
+        ESCROW_RELEASE = 'ESCROW_RELEASE', _('Libération Séquestre')
+        BOOST_PAYMENT = 'BOOST_PAYMENT', _('Achat de Boost')
+        REFERRAL_BONUS = 'REFERRAL_BONUS', _('Bonus Parrainage')
+        INSURANCE_FEE = 'INSURANCE_FEE', _('Frais Assurance') 
+        
+    mission = models.ForeignKey('missions.Mission', on_delete=models.SET_NULL, null=True, blank=True)    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet, 
+        on_delete=models.CASCADE, 
+        related_name='transactions'
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_("Montant"))
+    transaction_type = models.CharField(
+        max_length=20, 
+        choices=TransactionType.choices,
+        verbose_name=_("Type de transaction")
+    )
+    reference = models.CharField(
+        max_length=100, 
+        unique=True, 
+        null=True, 
+        blank=True,
+        verbose_name=_("Référence externe")
+    )
+    description = models.TextField(blank=True, verbose_name=_("Description"))
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _("Transaction")
+        verbose_name_plural = _("Transactions")
+
+    def __str__(self):
+        return f"{self.transaction_type} - {self.amount} FCFA"
