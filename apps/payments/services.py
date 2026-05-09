@@ -1,6 +1,7 @@
 import requests
 from django.conf import settings
 from .models import Payment
+from apps.core.choices import PaymentStatus
 
 class FeexPayService:
     BASE_URL = "https://api.feexpay.me/backend" # À vérifier selon leur doc actuelle
@@ -11,7 +12,7 @@ class FeexPayService:
         payment = Payment.objects.create(
             user=user,
             amount=amount,
-            status=Payment.PaymentStatus.PENDING
+            status=PaymentStatus.PENDING
         )
 
         # 2. Préparer la requête pour FeexPay

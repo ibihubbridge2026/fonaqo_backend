@@ -3,6 +3,7 @@ import re
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from apps.core.choices import MissionStatus
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -45,7 +46,7 @@ class Message(models.Model):
     def save(self, *args, **kwargs):
         # Logique Anti-Fraude : Masquage automatique des numéros de téléphone 
         # tant que la mission n'est pas acceptée/payée.
-        if not self.mission or self.mission.status == 'PENDING':
+        if not self.mission or self.mission.status == MissionStatus.PENDING:
             # Remplace les suites de 8 chiffres (format Bénin) par des astérisques
             self.content = re.sub(r'\d{8,}', '********', self.content)
         super().save(*args, **kwargs)

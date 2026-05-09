@@ -2,13 +2,9 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from apps.core.choices import PaymentStatus
 
 class Payment(models.Model):
-    class PaymentStatus(models.TextChoices):
-        PENDING = 'PENDING', _('En attente')
-        SUCCESS = 'SUCCESS', _('Réussi')
-        FAILED = 'FAILED', _('Échoué')
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -19,7 +15,7 @@ class Payment(models.Model):
     
     status = models.CharField(
         max_length=20, 
-        choices=PaymentStatus.choices, 
+        choices=PaymentStatus.choices,
         default=PaymentStatus.PENDING
     )
     

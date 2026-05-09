@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
+from apps.core.choices import KYCStatus
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -15,6 +16,11 @@ class User(AbstractUser):
     is_agent = models.BooleanField(_('est agent terrain'), default=False)
     is_client = models.BooleanField(_('est client'), default=True)
     is_verified = models.BooleanField(_('profil vérifié (KYC)'), default=False)
+    kyc_status = models.CharField(
+        max_length=20,
+        choices=KYCStatus.choices,
+        default=KYCStatus.PENDING,
+    )
     
     # --- Système de Niveaux & IA (Points 2 & 3) ---
     level = models.ForeignKey('missions.AgentLevel', on_delete=models.SET_NULL, null=True, blank=True)

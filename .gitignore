@@ -17,6 +17,9 @@ db.sqlite3
 db.sqlite3-journal
 media/
 static_root/
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
 
 # --- IDE (VS Code, PyCharm) ---
 .vscode/

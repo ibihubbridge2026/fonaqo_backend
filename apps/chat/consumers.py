@@ -9,8 +9,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.room_group_name = f'chat_{self.mission_id}'
         user = self.scope['user']
 
-        # Vérification d'accès
+        if not user or not user.is_authenticated:
+            await self.close(code=4001)
+            return
+
+        # Verification d'acces stricte (client/agent de la mission uniquement)
         if not await self.is_member_of_mission(user):
+            await self.close(code=4003)
+            return
+
+        if not await self._mission_exists():
             await self.close()
             return
 
@@ -26,6 +34,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Mission.DoesNotExist:
             return False    
 
+    @database_sync_to_async
+    def _mission_exists(self):
+        from apps.missions.models import Mission
+        return Mission.objects.filter(id=self.mission_id).exists()
+
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(
             self.room_group_name,
@@ -38,7 +51,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         sender = self.scope['user']
 
         if event_type == 'message':
-            content = data['message']
+            content = data.get('message')
+            if not content:
+                return
             # 1. Sauvegarder dans PostgreSQL
             await self.save_message(sender, content)
             

@@ -1,22 +1,43 @@
 import os
 from pathlib import Path
+
+import environ
 import firebase_admin
+import sentry_sdk
+from celery.schedules import crontab
 from firebase_admin import credentials
+from sentry_sdk.integrations.django import DjangoIntegration
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env(DEBUG=(bool, False))
+environ.Env.read_env(BASE_DIR / ".env")
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+# Celery Config
+CELERY_BROKER_URL = env("REDIS_URL", default="redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = "django-db"
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_TIMEZONE = "Africa/Porto-Novo"
+
+SENTRY_DSN = env("SENTRY_DSN", default="")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        traces_sample_rate=env.float("SENTRY_TRACES_SAMPLE_RATE", default=0.2),
+        send_default_pii=env.bool("SENTRY_SEND_DEFAULT_PII", default=False),
+    )
+
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-7=j@5379h9f@vw*%q&0p-%necl)h^p5lz5)q**oc!9c^s-orme'
+SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env.bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
 
 
 # Application definition
@@ -37,6 +58,7 @@ INSTALLED_APPS = [
     'channels', # Pour les WebSockets
 
     # Local Apps (nos modules — AppConfig explicites)
+    'apps.core.apps.CoreConfig',
     'apps.accounts.apps.AccountsConfig',
     'apps.missions.apps.MissionsConfig',
     'apps.wallets.apps.WalletsConfig',
@@ -46,6 +68,11 @@ INSTALLED_APPS = [
     'apps.services.apps.ServicesConfig',
     # Chat App (WebSocket)
     'apps.chat.apps.ChatConfig',
+
+    #celery
+    'django_celery_results',
+    'django_celery_beat',
+    'simple_history'
 ]
 
 MIDDLEWARE = [
@@ -56,6 +83,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.core.middleware.StandardizeJsonResponseMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -81,16 +109,20 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.contrib.gis.db.backends.postgis',
-        'NAME': os.environ.get('POSTGRES_DB', 'fonaqo_db'),
-        'USER': os.environ.get('POSTGRES_USER', 'root'),
-        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'Password@2026'),
-        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+DATABASE_URL = env("DATABASE_URL", default="")
+if DATABASE_URL:
+    DATABASES = {"default": env.db("DATABASE_URL")}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.contrib.gis.db.backends.postgis",
+            "NAME": env("POSTGRES_DB", default="fonaqo_db"),
+            "USER": env("POSTGRES_USER", default="root"),
+            "PASSWORD": env("POSTGRES_PASSWORD", default="postgres"),
+            "HOST": env("POSTGRES_HOST", default="localhost"),
+            "PORT": env("POSTGRES_PORT", default="5432"),
+        }
     }
-}
 
 
 # Password validation
@@ -144,12 +176,16 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+        "hosts": [env("REDIS_URL", default="redis://127.0.0.1:6379/0")],
         },
     },
 }
 
 REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": [
+        "apps.core.renderers.StandardizedJSONRenderer",
+    ],
+    "EXCEPTION_HANDLER": "apps.core.exceptions.standardized_exception_handler",
 
     # 1. PAGINATION (Point 1)
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -189,8 +225,15 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-missions-every-30-mins': {
+        'task': 'apps.missions.tasks.cleanup_expired_missions',
+        'schedule': crontab(minute='*/30'),
+    },
+}
 
 FIREBASE_KEY_PATH = os.path.join(BASE_DIR, 'firebase-auth.json')
+FIREBASE_KEY_PATH = env("FIREBASE_KEY_PATH", default=FIREBASE_KEY_PATH)
 
 # Initialisation de Firebase
 if os.path.exists(FIREBASE_KEY_PATH):

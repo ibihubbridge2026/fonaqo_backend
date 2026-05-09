@@ -4,18 +4,21 @@ from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
+from simple_history.models import HistoricalRecords
+from apps.core.choices import AgentLevelName, MissionStatus
 
 # --- SYSTÈME DE TAGS & EXPERTISES (Point 5) ---
 class Tag(models.Model):
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True)
-
+    history = HistoricalRecords()
     def __str__(self):
         return self.name
-
+    history = HistoricalRecords()
+    
 # --- SYSTÈME DE NIVEAUX (Point 2) ---
 class AgentLevel(models.Model):
-    name = models.CharField(max_length=50) # Novice, Vérifié, Expert
+    name = models.CharField(max_length=50, choices=AgentLevelName.choices)
     min_missions = models.PositiveIntegerField(default=0)
     priority_boost = models.FloatField(default=1.0) # Multiplicateur de visibilité
     
@@ -24,16 +27,6 @@ class AgentLevel(models.Model):
 
 # --- MODÈLE MISSION PRINCIPAL ---
 class Mission(models.Model):
-    class MissionStatus(models.TextChoices):
-        PENDING = 'PENDING', _('En attente')
-        ACCEPTED = 'ACCEPTED', _('Acceptée')
-        ON_THE_WAY = 'ON_THE_WAY', _('En route')
-        ARRIVED = 'ARRIVED', _('Arrivé sur place')
-        IN_PROGRESS = 'IN_PROGRESS', _('En cours')
-        COMPLETED = 'COMPLETED', _('Terminée')
-        CANCELLED = 'CANCELLED', _('Annulée')
-        DISPUTED = 'DISPUTED', _('En litige')
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='missions_ordered')
     agent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='missions_assigned')
@@ -69,7 +62,7 @@ class Mission(models.Model):
 # --- TIMELINE DE MISSION (Point 1) ---
 class MissionTimeline(models.Model):
     mission = models.ForeignKey(Mission, on_delete=models.CASCADE, related_name='timeline')
-    status = models.CharField(max_length=20, choices=Mission.MissionStatus.choices)
+    status = models.CharField(max_length=20, choices=MissionStatus.choices)
     message = models.CharField(max_length=255)
     location = gis_models.PointField(srid=4326, null=True, blank=True)
     proof_photo = models.ImageField(upload_to='missions/timeline/', null=True, blank=True)

@@ -10,6 +10,7 @@ from .models import Mission, MissionTimeline, Dispute
 from .serializers import MissionSerializer
 from apps.accounts.permissions import IsVerifiedAgent
 from apps.notifications.services import NotificationService
+from apps.core.choices import MissionStatus
 
 class MissionViewSet(viewsets.ModelViewSet):
     """
@@ -27,7 +28,7 @@ class MissionViewSet(viewsets.ModelViewSet):
 
         # Filtrage : Un agent ne voit que les missions PENDING (disponibles)
         if self.action == 'list':
-            queryset = queryset.filter(status='PENDING')
+            queryset = queryset.filter(status=MissionStatus.PENDING)
 
         if lat and lng:
             try:
@@ -41,21 +42,21 @@ class MissionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Création initiale + Première étape Timeline
-        mission = serializer.save(client=self.request.user, status='PENDING')
-        self._add_to_timeline(mission, 'PENDING', _("Mission publiée par le client"))
+        mission = serializer.save(client=self.request.user, status=MissionStatus.PENDING)
+        self._add_to_timeline(mission, MissionStatus.PENDING, _("Mission publiée par le client"))
 
     @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
     def accept(self, request, pk=None):
         """ L'agent accepte : bloque l'argent en Escrow via Signal """
         mission = self.get_object()
-        if mission.status != 'PENDING':
+        if mission.status != MissionStatus.PENDING:
             return Response({"detail": _("Indisponible.")}, status=status.HTTP_400_BAD_REQUEST)
         
         mission.agent = request.user
-        mission.status = 'ACCEPTED'
+        mission.status = MissionStatus.ACCEPTED
         mission.save()
 
-        self._add_to_timeline(mission, 'ACCEPTED', _("Agent assigné et fonds sécurisés"), request)
+        self._add_to_timeline(mission, MissionStatus.ACCEPTED, _("Agent assigné et fonds sécurisés"), request)
         
         NotificationService.send_to_user(
             user=mission.client,
@@ -101,7 +102,7 @@ class MissionViewSet(viewsets.ModelViewSet):
         mission.end_photo = request.FILES['end_photo']
         mission.save()
         
-        self._add_to_timeline(mission, 'COMPLETED', _("Preuve de travail soumise"), request)
+        self._add_to_timeline(mission, MissionStatus.COMPLETED, _("Preuve de travail soumise"), request)
         
         NotificationService.send_to_user(
             user=mission.client,
@@ -136,22 +137,22 @@ class MissionViewSet(viewsets.ModelViewSet):
             defaults={'opened_by': request.user, 'reason': reason}
         )
         
-        mission.status = 'DISPUTED'
+        mission.status = MissionStatus.DISPUTED
         mission.save()
         
-        self._add_to_timeline(mission, 'DISPUTED', _("LITIGE OUVERT : Argent bloqué."), request)
+        self._add_to_timeline(mission, MissionStatus.DISPUTED, _("LITIGE OUVERT : Argent bloqué."), request)
         
         return Response({"detail": _("Litige enregistré. L'admin va trancher.")})
 
     def _finalize_mission(self, mission):
         """ Fermeture et Paiement """
-        if mission.status == 'COMPLETED':
+        if mission.status == MissionStatus.COMPLETED:
              return Response({"detail": _("Déjà payé.")})
 
-        mission.status = 'COMPLETED'
+        mission.status = MissionStatus.COMPLETED
         mission.save()
         
-        self._add_to_timeline(mission, 'COMPLETED', _("Mission validée. Fonds libérés."), self.request)
+        self._add_to_timeline(mission, MissionStatus.COMPLETED, _("Mission validée. Fonds libérés."), self.request)
         
         NotificationService.send_to_user(
             user=mission.agent,

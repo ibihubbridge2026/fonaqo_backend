@@ -2,6 +2,8 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from simple_history.models import HistoricalRecords
+from apps.core.choices import TransactionStatus
 
 class Wallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -25,6 +27,8 @@ class Wallet(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    history = HistoricalRecords()
+    
     class Meta:
         verbose_name = _("Portefeuille")
         verbose_name_plural = _("Portefeuilles")
@@ -43,7 +47,8 @@ class Transaction(models.Model):
         ESCROW_RELEASE = 'ESCROW_RELEASE', _('Libération Séquestre')
         BOOST_PAYMENT = 'BOOST_PAYMENT', _('Achat de Boost')
         REFERRAL_BONUS = 'REFERRAL_BONUS', _('Bonus Parrainage')
-        INSURANCE_FEE = 'INSURANCE_FEE', _('Frais Assurance') 
+        INSURANCE_FEE = 'INSURANCE_FEE', _('Frais Assurance')
+        TRANSFER = 'TRANSFER', _('Transfert')
         
     mission = models.ForeignKey('missions.Mission', on_delete=models.SET_NULL, null=True, blank=True)    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -57,6 +62,11 @@ class Transaction(models.Model):
         max_length=20, 
         choices=TransactionType.choices,
         verbose_name=_("Type de transaction")
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=TransactionStatus.choices,
+        default=TransactionStatus.COMPLETED,
     )
     reference = models.CharField(
         max_length=100, 

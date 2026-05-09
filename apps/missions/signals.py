@@ -4,6 +4,7 @@ from django.utils import timezone
 from .models import Mission, MissionTimeline, AgentLevel
 from apps.wallets.models import Wallet, Transaction
 from apps.escrow.models import Escrow
+from apps.core.choices import EscrowStatus, MissionStatus, TransactionStatus
 
 @receiver(post_save, sender=Mission)
 def handle_mission_status_change(sender, instance, created, **kwargs):
@@ -18,9 +19,9 @@ def handle_mission_status_change(sender, instance, created, **kwargs):
     )
 
     # 2. Logique de paiement final (Point 15)
-    if instance.status == 'COMPLETED':
-        escrow = instance.escrow_record  # On récupère le séquestre lié
-        if escrow.status == 'HELD':
+    if instance.status == MissionStatus.COMPLETED:
+        escrow = instance.escrow
+        if escrow.status == EscrowStatus.HELD:
             # Libérer l'argent vers le wallet de l'agent
             agent_wallet = Wallet.objects.get(user=instance.agent)
             
@@ -29,7 +30,7 @@ def handle_mission_status_change(sender, instance, created, **kwargs):
             agent_wallet.save()
             
             # Marquer le séquestre comme libéré
-            escrow.status = 'RELEASED'
+            escrow.status = EscrowStatus.RELEASED
             escrow.released_at = timezone.now()
             escrow.save()
             
@@ -37,7 +38,8 @@ def handle_mission_status_change(sender, instance, created, **kwargs):
             Transaction.objects.create(
                 wallet=agent_wallet,
                 amount=instance.price,
-                transaction_type='MISSION_PAYMENT',
+                transaction_type=Transaction.TransactionType.MISSION_PAYMENT,
+                status=TransactionStatus.COMPLETED,
                 description=f"Paiement reçu pour la mission : {instance.title}",
                 mission=instance
             )
@@ -50,7 +52,7 @@ def update_agent_stats_and_level(agent):
     from django.db.models import Avg, Count
     
     # Calcul du nombre de missions terminées
-    completed_count = Mission.objects.filter(agent=agent, status='COMPLETED').count()
+    completed_count = Mission.objects.filter(agent=agent, status=MissionStatus.COMPLETED).count()
     
     # Mise à jour du taux de complétion
     total_assigned = Mission.objects.filter(agent=agent).count()
