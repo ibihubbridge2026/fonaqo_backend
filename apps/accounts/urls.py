@@ -1,5 +1,9 @@
 from django.urls import path
+from .views import login_view, register_view, forgot_password_view, google_auth_view
 
 urlpatterns = [
-    # On ajoutera les vues de Login/Register ici après
+    path('login/', login_view, name='login'),
+    path('register/', register_view, name='register'),
+    path('forgot-password/', forgot_password_view, name='forgot-password'),
+    path('google-auth/', google_auth_view, name='google-auth'),
 ]

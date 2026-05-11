@@ -115,12 +115,6 @@ docker compose exec web python manage.py seed_data password123
 # (utile si le port 5432 est déjà utilisé)
 sudo systemctl stop postgresql
 
-# Voir qui utilise le port 5432
-sudo lsof -i :5432
-
-# Tuer le processus qui utilise le port 5432
-sudo fuser -k 5432/tcp
-
 
 # =========================
 # DJANGO - CHANGER MOT DE PASSE
@@ -150,4 +144,11 @@ sudo systemctl stop redis-server
 # Tue de force tout ce qui utilise le port 6379
 sudo fuser -k 6379/tcp
 
+# Voir qui utilise le port 5432
+sudo lsof -i :5432
+
+# Tuer le processus qui utilise le port 5432
+sudo fuser -k 5432/tcp
 docker compose logs -f web
+
+docker run -p 1080:1080 -p 1025:1025 maildev/maildev

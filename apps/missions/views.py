@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.http import JsonResponse
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.utils.translation import gettext_lazy as _
@@ -20,6 +21,61 @@ class MissionViewSet(viewsets.ModelViewSet):
     queryset = Mission.objects.all()
     serializer_class = MissionSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def available(self, request):
+        """
+        Liste des missions disponibles (publiques) - accessible uniquement pour les agents
+        """
+        # Vérifier que l'utilisateur est un agent
+        print(f"User: {request.user}, IsAgent: {request.user.is_agent}")
+        if not request.user.is_agent:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Accès refusé. Cette fonctionnalité est réservée aux agents.',
+                'data': {}
+            }, status=status.HTTP_403_FORBIDDEN)
+        queryset = Mission.objects.filter(status=MissionStatus.PENDING).select_related('client')
+        
+        # Filtrage par localisation si fourni
+        lat = request.GET.get('lat')
+        lng = request.GET.get('lng')
+        
+        if lat and lng:
+            try:
+                user_location = Point(float(lng), float(lat), srid=4326)
+                queryset = queryset.annotate(
+                    distance=Distance('location', user_location)
+                ).order_by('distance')
+            except (ValueError, TypeError):
+                pass
+        
+        # Sérialisation manuelle pour éviter les erreurs
+        missions_data = []
+        for mission in queryset:
+            missions_data.append({
+                'id': str(mission.id),
+                'title': mission.title,
+                'description': mission.description,
+                'price': float(mission.price),
+                'status': mission.status,
+                'location': {
+                    'type': 'Point',
+                    'coordinates': [mission.location.x, mission.location.y]
+                } if mission.location else None,
+                'client': {
+                    'id': str(mission.client.id),
+                    'username': mission.client.username,
+                    'phone_number': mission.client.phone_number
+                } if mission.client else None,
+                'created_at': mission.created_at.isoformat() if mission.created_at else None,
+            })
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Missions disponibles récupérées',
+            'data': missions_data
+        })
 
     def get_queryset(self):
         queryset = Mission.objects.all()

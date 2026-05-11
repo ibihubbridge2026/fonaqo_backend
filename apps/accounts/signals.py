@@ -1,9 +1,59 @@
 from django.db.models.signals import post_save
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
+from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
+from django.conf import settings
+from celery import shared_task
+
 from .models import User
 from apps.notifications.services import NotificationService
 from apps.wallets.models import Wallet
+
+User = get_user_model()
+
+@shared_task
+def send_welcome_email_task(user_id, user_email, username):
+    """
+    Tâche Celery asynchrone pour envoyer l'email de bienvenue
+    """
+    try:
+        subject = 'Bienvenue sur FONACO !'
+        message = f'''
+        Bonjour {username},
+
+        Bienvenue sur la plateforme FONACO !
+
+        Nous sommes ravis de vous compter parmi nos utilisateurs. 
+        FONACO vous permet de :
+        • Devenir un Agent d'élite et proposer vos services
+        • Déléguer vos tâches à des professionnels qualifiés
+        • Accéder à une communauté active et engagée
+
+        Votre compte est maintenant actif et prêt à être utilisé.
+
+        Si vous avez des questions, n'hésitez pas à nous contacter.
+
+        Cordialement,
+        L'équipe FONACO
+        Propulsé par IBIHUB BRIDGE
+
+        ---
+        Cet email a été généré automatiquement. Merci de ne pas y répondre.
+        '''
+        
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@fonaco.com'),
+            recipient_list=[user_email],
+            fail_silently=False,
+        )
+        
+        print(f"Email de bienvenue envoyé à {user_email}")
+        
+    except Exception as e:
+        print(f"Erreur lors de l'envoi de l'email de bienvenue: {e}")
 
 @receiver(pre_save, sender=User)
 def notify_agent_verification(sender, instance, **kwargs):
@@ -32,6 +82,13 @@ def create_user_wallet_and_referral(sender, instance, created, **kwargs):
     if created:
         # Créer le wallet automatiquement à l'inscription
         Wallet.objects.get_or_create(user=instance)
+        
+        # Envoyer l'email de bienvenue de manière asynchrone via Celery
+        send_welcome_email_task.delay(
+            user_id=instance.id,
+            user_email=instance.email,
+            username=instance.get_full_name() or instance.username
+        )
         
         # Si parrainé, on peut envoyer une notification au parrain
         if instance.referred_by:

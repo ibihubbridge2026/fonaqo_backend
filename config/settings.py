@@ -37,8 +37,9 @@ SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
-
+# Dans fonaqo_back/config/settings.py
+ALLOWED_HOSTS = ['*']
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Application definition
 
@@ -83,7 +84,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'apps.core.middleware.StandardizeJsonResponseMiddleware',
+    # 'apps.core.middleware.StandardizeJsonResponseMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -224,6 +225,15 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
+
+# Configuration Email pour MailDev (développement)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'localhost'  # ou 'maildev' si sous Docker
+EMAIL_PORT = 1025
+EMAIL_USE_TLS = False
+EMAIL_HOST_USER = ''
+EMAIL_HOST_PASSWORD = ''
+DEFAULT_FROM_EMAIL = 'noreply@fonaco.com'
 
 CELERY_BEAT_SCHEDULE = {
     'cleanup-missions-every-30-mins': {
