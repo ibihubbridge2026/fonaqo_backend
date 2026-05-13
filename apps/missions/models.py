@@ -47,6 +47,10 @@ class Mission(models.Model):
     qr_code_token = models.CharField(max_length=100, unique=True, blank=True)
     qr_expires_at = models.DateTimeField(null=True, blank=True)
     
+    # Logique conditionnelle (Module 2)
+    requires_procuration = models.BooleanField(default=False, help_text="La mission nécessite une procuration")
+    target_agent_username = models.CharField(max_length=150, null=True, blank=True, help_text="Username de l'agent cible si assignation manuelle")
+    
     # Preuves
     start_photo = models.ImageField(upload_to='missions/proofs/start/', null=True, blank=True)
     end_photo = models.ImageField(upload_to='missions/proofs/end/', null=True, blank=True)

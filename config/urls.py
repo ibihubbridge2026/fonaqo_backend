@@ -13,6 +13,7 @@ api_v1_patterns = [
     path('payments/', include('apps.payments.urls')),
     path('escrow/', include('apps.escrow.urls')),
     path('services/', include('apps.services.urls')),
+    path('notifications/', include('apps.notifications.urls')),
 ]
 
 urlpatterns = [

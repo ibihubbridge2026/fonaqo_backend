@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,6 +11,8 @@ from django.utils import timezone
 
 from .models import Mission, MissionTimeline, Dispute
 from .serializers import MissionSerializer
+
+logger = logging.getLogger(__name__)
 from apps.accounts.permissions import IsVerifiedAgent
 from apps.notifications.services import NotificationService
 from apps.core.choices import MissionStatus
@@ -27,8 +31,7 @@ class MissionViewSet(viewsets.ModelViewSet):
         """
         Liste des missions disponibles (publiques) - accessible uniquement pour les agents
         """
-        # Vérifier que l'utilisateur est un agent
-        print(f"User: {request.user}, IsAgent: {request.user.is_agent}")
+        logger.debug("available missions user=%s is_agent=%s", request.user, request.user.is_agent)
         if not request.user.is_agent:
             return JsonResponse({
                 'status': 'error',
@@ -50,26 +53,7 @@ class MissionViewSet(viewsets.ModelViewSet):
             except (ValueError, TypeError):
                 pass
         
-        # Sérialisation manuelle pour éviter les erreurs
-        missions_data = []
-        for mission in queryset:
-            missions_data.append({
-                'id': str(mission.id),
-                'title': mission.title,
-                'description': mission.description,
-                'price': float(mission.price),
-                'status': mission.status,
-                'location': {
-                    'type': 'Point',
-                    'coordinates': [mission.location.x, mission.location.y]
-                } if mission.location else None,
-                'client': {
-                    'id': str(mission.client.id),
-                    'username': mission.client.username,
-                    'phone_number': mission.client.phone_number
-                } if mission.client else None,
-                'created_at': mission.created_at.isoformat() if mission.created_at else None,
-            })
+        missions_data = [MissionSerializer(m).data for m in queryset]
         
         return JsonResponse({
             'status': 'success',

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -51,11 +52,15 @@ class User(AbstractUser):
 
     def save(self, *args, **kwargs):
         if not self.username:
-            self.username = self.phone_number or self.email.split('@')[0]
+            self.username = self.phone_number or self.email.split("@")[0]
         if not self.referral_code:
             self.referral_code = str(uuid.uuid4())[:8].upper()
-        
-        # Debug pour l'inscription
-        print(f"DEBUG SAVE: Création utilisateur - phone={self.phone_number}, email={self.email}, is_agent={self.is_agent}")
-        
+
+        logging.getLogger(__name__).debug(
+            "Sauvegarde utilisateur phone=%s email=%s is_agent=%s",
+            self.phone_number,
+            self.email,
+            self.is_agent,
+        )
+
         super().save(*args, **kwargs)

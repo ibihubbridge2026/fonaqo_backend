@@ -1,11 +1,11 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.http import JsonResponse
-from .serializers import LoginSerializer, UserSerializer, RegisterSerializer
+from .serializers import LoginSerializer, UserSerializer, RegisterSerializer, ProfileUpdateSerializer
 
 User = get_user_model()
 
@@ -187,3 +187,41 @@ def google_auth_view(request):
             'message': f'Erreur lors de l\'authentification Google: {str(e)}',
             'data': {}
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def profile_view(request):
+    """
+    Vue pour consulter et mettre à jour le profil utilisateur
+    GET: Retourne les informations du profil
+    PATCH: Met à jour les informations du profil
+    """
+    user = request.user
+    
+    if request.method == 'GET':
+        serializer = UserSerializer(user)
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Profil récupéré avec succès',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+    
+    elif request.method == 'PATCH':
+        serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            updated_user = serializer.save()
+            
+            # Retourner les données complètes mises à jour
+            user_serializer = UserSerializer(updated_user)
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Profil mis à jour avec succès',
+                'data': user_serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Erreur lors de la mise à jour du profil',
+            'data': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)

@@ -19,7 +19,15 @@ class Command(BaseCommand):
         # 1. Récupération ou création d'utilisateurs
         users = list(User.objects.all())
         if len(users) < 10:
-            for _ in range(10):
+            # Créer des agents avec positions GPS réelles à Cotonou
+            cotonou_locations = [
+                {"name": "Fidjrossè", "lat": 6.3676, "lng": 2.4412},
+                {"name": "Cadjehoun", "lat": 6.3834, "lng": 2.4483},
+                {"name": "Akpakpa", "lat": 6.3724, "lng": 2.4532},
+            ]
+            
+            for i in range(10):
+                location = random.choice(cotonou_locations)
                 phone = f"01{random.randint(10000000, 99999999)}"
                 user = User.objects.create_user(
                     phone_number=phone,
@@ -27,6 +35,19 @@ class Command(BaseCommand):
                     email=fake.email(),
                     is_verified=True,
                     password="password123"
+                )
+                
+                # Créer un profil agent avec position GPS
+                from apps.agents.models import AgentProfile
+                AgentProfile.objects.create(
+                    user=user,
+                    bio=fake.text(max_nb_chars=100),
+                    rating=round(random.uniform(3.5, 5.0), 1),
+                    total_missions=random.randint(5, 50),
+                    is_available=True,
+                    latitude=location["lat"],
+                    longitude=location["lng"],
+                    address=f"{location['name']}, Cotonou, Bénin"
                 )
                 users.append(user)
 
@@ -39,8 +60,16 @@ class Command(BaseCommand):
 
         # 3. Création des Missions
         self.stdout.write("📝 Création des missions...")
+        # Coordonnées GPS réelles de Cotonou pour les agents
+        cotonou_locations = [
+            {"name": "Fidjrossè", "lat": 6.3676, "lng": 2.4412},
+            {"name": "Cadjehoun", "lat": 6.3834, "lng": 2.4483},
+            {"name": "Akpakpa", "lat": 6.3724, "lng": 2.4532},
+        ]
+        
         for i in range(15):
-            random_point = Point(random.uniform(-4.0, -3.9), random.uniform(5.3, 5.4)) 
+            location = random.choice(cotonou_locations)
+            random_point = Point(location["lat"], location["lng"]) 
             
             # On choisit un client au hasard parmi nos utilisateurs riches
             client = random.choice(users)
