@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'channels', # Pour les WebSockets
+    'django_filters',
 
     # Local Apps (nos modules — AppConfig explicites)
     'apps.core.apps.CoreConfig',
@@ -69,6 +70,10 @@ INSTALLED_APPS = [
     'apps.services.apps.ServicesConfig',
     # Chat App (WebSocket)
     'apps.chat.apps.ChatConfig',
+
+    # New AI & Opportunities Apps
+    'ai_search.apps.AiSearchConfig',
+    'opportunities.apps.OpportunitiesConfig',
 
     #celery
     'django_celery_results',
