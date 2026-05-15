@@ -14,6 +14,9 @@ api_v1_patterns = [
     path('escrow/', include('apps.escrow.urls')),
     path('services/', include('apps.services.urls')),
     path('notifications/', include('apps.notifications.urls')),
+    # New AI & Opportunities endpoints
+    path('ai-search/', include('ai_search.urls')),
+    path('opportunities/', include('opportunities.urls')),
 ]
 
 urlpatterns = [
