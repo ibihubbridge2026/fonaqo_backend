@@ -12,9 +12,9 @@ class Tag(models.Model):
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True)
     history = HistoricalRecords()
+
     def __str__(self):
         return self.name
-    history = HistoricalRecords()
     
 # --- SYSTÈME DE NIVEAUX (Point 2) ---
 class AgentLevel(models.Model):
@@ -47,6 +47,10 @@ class Mission(models.Model):
     qr_code_token = models.CharField(max_length=100, unique=True, blank=True)
     qr_expires_at = models.DateTimeField(null=True, blank=True)
     
+    # Logique conditionnelle (Module 2)
+    requires_procuration = models.BooleanField(default=False, help_text="La mission nécessite une procuration")
+    target_agent_username = models.CharField(max_length=150, null=True, blank=True, help_text="Username de l'agent cible si assignation manuelle")
+    
     # Preuves
     start_photo = models.ImageField(upload_to='missions/proofs/start/', null=True, blank=True)
     end_photo = models.ImageField(upload_to='missions/proofs/end/', null=True, blank=True)
@@ -59,6 +63,9 @@ class Mission(models.Model):
             self.qr_code_token = uuid.uuid4().hex
         super().save(*args, **kwargs)
 
+    def __str__(self):
+        return f"Mission {self.title[:50]}{'...' if len(self.title) > 50 else ''} ({self.id})"
+
 # --- TIMELINE DE MISSION (Point 1) ---
 class MissionTimeline(models.Model):
     mission = models.ForeignKey(Mission, on_delete=models.CASCADE, related_name='timeline')
@@ -68,6 +75,9 @@ class MissionTimeline(models.Model):
     proof_photo = models.ImageField(upload_to='missions/timeline/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+
+    def __str__(self):
+        return f"Timeline {self.status} - {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
 
 # --- SYSTÈME DE LITIGES (Point 8) ---
 class Dispute(models.Model):
@@ -84,10 +94,16 @@ class Dispute(models.Model):
     admin_decision = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return f"Dispute {self.status} - {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
+
 class DisputeEvidence(models.Model):
     dispute = models.ForeignKey(Dispute, on_delete=models.CASCADE, related_name='evidences')
     file = models.FileField(upload_to='disputes/evidences/')
     description = models.CharField(max_length=255)
+
+    def __str__(self):
+        return f"Evidence: {self.description[:30]}{'...' if len(self.description) > 30 else ''}"
 
 # --- MATCHING & RECOMMENDATION (Point 4) ---
 class MissionRecommendation(models.Model):
@@ -97,6 +113,10 @@ class MissionRecommendation(models.Model):
     reason = models.CharField(max_length=255) # Ex: "Proximité + Niveau Expert"
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        agent_name = self.agent.username or self.agent.email or f"Agent-{self.agent.id}"
+        return f"Recommendation {agent_name} → {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
+
 # --- BOOSTS (Point 6) ---
 class BoostPlan(models.Model):
     name = models.CharField(max_length=100)
@@ -104,8 +124,15 @@ class BoostPlan(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     priority_score = models.FloatField(default=2.0)
 
+    def __str__(self):
+        return f"Boost {self.name} ({self.duration_hours}h) - {self.price} FCFA"
+
 class AgentBoost(models.Model):
     agent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     plan = models.ForeignKey(BoostPlan, on_delete=models.CASCADE)
     active_until = models.DateTimeField()
     zone = gis_models.PolygonField(srid=4326, null=True, blank=True) # Zone de boost géo
+
+    def __str__(self):
+        agent_name = self.agent.username or self.agent.email or f"Agent-{self.agent.id}"
+        return f"Boost {agent_name} - {self.plan.name}"

@@ -41,7 +41,8 @@ class Message(models.Model):
         verbose_name_plural = _('messages')
 
     def __str__(self):
-        return f"{self.sender.phone_number}: {self.content[:20]}"
+        sender_id = self.sender.phone_number or self.sender.email or self.sender.username or f"User-{self.sender.id}"
+        return f"{sender_id}: {self.content[:20]}{'...' if len(self.content) > 20 else ''}"
 
     def save(self, *args, **kwargs):
         # Logique Anti-Fraude : Masquage automatique des numéros de téléphone 

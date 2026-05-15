@@ -37,10 +37,22 @@ SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-# Dans fonaqo_back/config/settings.py
-ALLOWED_HOSTS = ['*']
-CORS_ALLOW_ALL_ORIGINS = True
+# ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*"] if DEBUG else ["localhost", "127.0.0.1"])
+# CORS_ALLOW_ALL_ORIGINS = DEBUG
+# CORS_ALLOWED_ORIGINS = env.list(
+#     "CORS_ALLOWED_ORIGINS",
+#     default=["http://localhost:3000", "http://127.0.0.1:3000"],
+# )
 
+# 2. Autorise explicitement ton IP et le wildcard
+ALLOWED_HOSTS = ["*", "192.168.1.73", "localhost", "127.0.0.1"]
+
+# 3. CORS : Indispensable pour que Flutter (considéré comme une origine différente) puisse parler à Django
+CORS_ALLOW_ALL_ORIGINS = True  # Autorise tout en développement
+CORS_ALLOW_CREDENTIALS = True
+
+# Optionnel : Si tu utilises CSRF
+CSRF_TRUSTED_ORIGINS = ["http://192.168.1.73:8000", "http://localhost:8000"]
 # Application definition
 
 INSTALLED_APPS = [
@@ -69,6 +81,15 @@ INSTALLED_APPS = [
     'apps.services.apps.ServicesConfig',
     # Chat App (WebSocket)
     'apps.chat.apps.ChatConfig',
+    
+    # NOUVELLES APPS
+    'apps.ai_search.apps.AiSearchConfig',
+    'apps.opportunities.apps.OpportunitiesConfig',
+    'apps.boosts.apps.BoostsConfig',
+    'apps.disputes.apps.DisputesConfig',
+    'apps.chat_enhanced.apps.ChatEnhancedConfig',
+    'apps.missions_enhanced.apps.MissionsEnhancedConfig',
+    'apps.statistics.apps.StatisticsConfig',
 
     #celery
     'django_celery_results',
@@ -79,12 +100,12 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    # 'apps.core.middleware.StandardizeJsonResponseMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'

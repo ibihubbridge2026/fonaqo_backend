@@ -1,3 +1,4 @@
+import logging
 import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -45,17 +46,38 @@ class User(AbstractUser):
     witness_2_phone = models.CharField(_('Tel Témoin 2'), max_length=20, blank=True)
 
     profile_picture = models.ImageField(_('photo de profil'), upload_to='profiles/', blank=True, null=True)
+    
+    # Localisation géographique
+    latitude = models.FloatField(_('latitude'), null=True, blank=True)
+    longitude = models.FloatField(_('longitude'), null=True, blank=True)
+    address = models.CharField(_('adresse'), max_length=500, blank=True)
+    city = models.CharField(_('ville'), max_length=100, blank=True)
 
     USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = ['username', 'email']
 
     def save(self, *args, **kwargs):
         if not self.username:
-            self.username = self.phone_number or self.email.split('@')[0]
+            self.username = self.phone_number or self.email.split("@")[0]
         if not self.referral_code:
             self.referral_code = str(uuid.uuid4())[:8].upper()
-        
-        # Debug pour l'inscription
-        print(f"DEBUG SAVE: Création utilisateur - phone={self.phone_number}, email={self.email}, is_agent={self.is_agent}")
-        
+
+        logging.getLogger(__name__).debug(
+            "Sauvegarde utilisateur phone=%s email=%s is_agent=%s",
+            self.phone_number,
+            self.email,
+            self.is_agent,
+        )
+
         super().save(*args, **kwargs)
+
+    def __str__(self):
+        # Prioriser l'email, puis le username, puis le phone_number
+        if self.email:
+            return self.email
+        elif self.username:
+            return self.username
+        elif self.phone_number:
+            return self.phone_number
+        else:
+            return f"User-{self.id}"

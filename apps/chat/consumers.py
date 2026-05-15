@@ -1,25 +1,36 @@
 import json
+import uuid
+
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.core.exceptions import ValidationError
+
 from .models import Message
+
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.mission_id = self.scope['url_route']['kwargs']['mission_id']
-        self.room_group_name = f'chat_{self.mission_id}'
-        user = self.scope['user']
+        self.mission_id = self.scope["url_route"]["kwargs"]["mission_id"]
+        self.room_group_name = f"chat_{self.mission_id}"
+        user = self.scope.get("user")
 
         if not user or not user.is_authenticated:
             await self.close(code=4001)
             return
 
-        # Verification d'acces stricte (client/agent de la mission uniquement)
-        if not await self.is_member_of_mission(user):
-            await self.close(code=4003)
+        try:
+            uuid.UUID(str(self.mission_id))
+        except (ValueError, TypeError, AttributeError):
+            await self.close(code=4400)
             return
 
         if not await self._mission_exists():
-            await self.close()
+            await self.close(code=4404)
+            return
+
+        # Vérification d'accès stricte (client/agent de la mission uniquement)
+        if not await self.is_member_of_mission(user):
+            await self.close(code=4003)
             return
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
@@ -28,16 +39,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def is_member_of_mission(self, user):
         from apps.missions.models import Mission
+
         try:
             mission = Mission.objects.get(id=self.mission_id)
             return user == mission.client or user == mission.agent
-        except Mission.DoesNotExist:
-            return False    
+        except (Mission.DoesNotExist, ValueError, ValidationError):
+            return False
 
     @database_sync_to_async
     def _mission_exists(self):
         from apps.missions.models import Mission
-        return Mission.objects.filter(id=self.mission_id).exists()
+
+        try:
+            return Mission.objects.filter(id=self.mission_id).exists()
+        except (ValueError, ValidationError):
+            return False
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(

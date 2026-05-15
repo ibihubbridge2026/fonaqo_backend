@@ -8,6 +8,12 @@ class MissionStats(Mission):
         verbose_name = '💰 Tableau de Bord Financier'
         verbose_name_plural = '💰 Tableaux de Bord Financiers'
 
+    def __str__(self):
+        if self.title:
+            return f"Stats: {self.title[:50]}{'...' if len(self.title) > 50 else ''}"
+        else:
+            return f"Stats: Mission-{self.id}"
+
 @admin.register(MissionStats)
 class MissionStatsAdmin(admin.ModelAdmin):
     change_list_template = 'admin/mission_stats_change_list.html'

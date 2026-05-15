@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -5,10 +7,13 @@ from django.http import JsonResponse
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.utils.translation import gettext_lazy as _
-from django.utils import timezone
+from django.db.models import Q
 
 from .models import Mission, MissionTimeline, Dispute
 from .serializers import MissionSerializer
+from .ws_broadcast import broadcast_gps_group
+
+logger = logging.getLogger(__name__)
 from apps.accounts.permissions import IsVerifiedAgent
 from apps.notifications.services import NotificationService
 from apps.core.choices import MissionStatus
@@ -27,8 +32,7 @@ class MissionViewSet(viewsets.ModelViewSet):
         """
         Liste des missions disponibles (publiques) - accessible uniquement pour les agents
         """
-        # Vérifier que l'utilisateur est un agent
-        print(f"User: {request.user}, IsAgent: {request.user.is_agent}")
+        logger.debug("available missions user=%s is_agent=%s", request.user, request.user.is_agent)
         if not request.user.is_agent:
             return JsonResponse({
                 'status': 'error',
@@ -50,26 +54,7 @@ class MissionViewSet(viewsets.ModelViewSet):
             except (ValueError, TypeError):
                 pass
         
-        # Sérialisation manuelle pour éviter les erreurs
-        missions_data = []
-        for mission in queryset:
-            missions_data.append({
-                'id': str(mission.id),
-                'title': mission.title,
-                'description': mission.description,
-                'price': float(mission.price),
-                'status': mission.status,
-                'location': {
-                    'type': 'Point',
-                    'coordinates': [mission.location.x, mission.location.y]
-                } if mission.location else None,
-                'client': {
-                    'id': str(mission.client.id),
-                    'username': mission.client.username,
-                    'phone_number': mission.client.phone_number
-                } if mission.client else None,
-                'created_at': mission.created_at.isoformat() if mission.created_at else None,
-            })
+        missions_data = [MissionSerializer(m).data for m in queryset]
         
         return JsonResponse({
             'status': 'success',
@@ -78,13 +63,20 @@ class MissionViewSet(viewsets.ModelViewSet):
         })
 
     def get_queryset(self):
-        queryset = Mission.objects.all()
+        queryset = Mission.objects.all().select_related("client", "agent")
+        user = self.request.user
         lat = self.request.query_params.get('lat')
         lng = self.request.query_params.get('lng')
 
-        # Filtrage : Un agent ne voit que les missions PENDING (disponibles)
         if self.action == 'list':
-            queryset = queryset.filter(status=MissionStatus.PENDING)
+            if getattr(user, "is_agent", False) and not getattr(user, "is_client", True):
+                queryset = queryset.filter(
+                    Q(status=MissionStatus.PENDING) | Q(agent=user)
+                )
+            elif getattr(user, "is_client", False):
+                queryset = queryset.filter(client=user)
+            else:
+                queryset = queryset.filter(status=MissionStatus.PENDING)
 
         if lat and lng:
             try:
@@ -93,7 +85,9 @@ class MissionViewSet(viewsets.ModelViewSet):
                     distance=Distance('location', user_location)
                 ).order_by('distance')
             except (ValueError, TypeError):
-                pass
+                queryset = queryset.order_by("-created_at")
+        else:
+            queryset = queryset.order_by("-created_at")
         return queryset
 
     def perform_create(self, serializer):
@@ -119,7 +113,73 @@ class MissionViewSet(viewsets.ModelViewSet):
             title=_("Agent trouvé !"),
             body=_("{} a accepté votre mission.").format(request.user.username)
         )
+        broadcast_gps_group(
+            str(mission.id),
+            {"type": "mission_status", "status": mission.status},
+        )
         return Response({"detail": _("Mission acceptée.")})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
+    def start_mission(self, request, pk=None):
+        """Passe la mission en IN_PROGRESS (suivi GPS) — réservé à l'agent assigné."""
+        mission = self.get_object()
+        if mission.agent != request.user:
+            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
+
+        if mission.status not in (
+            MissionStatus.ACCEPTED,
+            MissionStatus.ON_THE_WAY,
+            MissionStatus.ARRIVED,
+        ):
+            return Response(
+                {"detail": _("Impossible de démarrer depuis ce statut.")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mission.status = MissionStatus.IN_PROGRESS
+        mission.save()
+        self._add_to_timeline(
+            mission, MissionStatus.IN_PROGRESS, _("Mission en cours (suivi GPS)."), request
+        )
+        broadcast_gps_group(
+            str(mission.id),
+            {"type": "mission_status", "status": mission.status},
+        )
+        NotificationService.send_to_user(
+            user=mission.client,
+            title=_("Mission démarrée"),
+            body=_("L'agent a démarré la mission. Suivez sa position en direct."),
+        )
+        return Response(MissionSerializer(mission).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
+    def mark_completed_live(self, request, pk=None):
+        """Termine la mission côté agent (flux live / module tracking)."""
+        mission = self.get_object()
+        if mission.agent != request.user:
+            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
+
+        if mission.status != MissionStatus.IN_PROGRESS:
+            return Response(
+                {"detail": _("La mission doit être en cours pour être clôturée.")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mission.status = MissionStatus.COMPLETED
+        mission.save()
+        self._add_to_timeline(
+            mission, MissionStatus.COMPLETED, _("Mission terminée par l'agent."), request
+        )
+        broadcast_gps_group(
+            str(mission.id),
+            {"type": "mission_status", "status": mission.status},
+        )
+        NotificationService.send_to_user(
+            user=mission.client,
+            title=_("Mission terminée"),
+            body=_("L'agent a indiqué la mission comme terminée."),
+        )
+        return Response(MissionSerializer(mission).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def update_steps(self, request, pk=None):
@@ -138,6 +198,11 @@ class MissionViewSet(viewsets.ModelViewSet):
         # Validation de l'ordre logique (Optionnel mais recommandé)
         mission.status = new_status
         mission.save()
+
+        broadcast_gps_group(
+            str(mission.id),
+            {"type": "mission_status", "status": new_status},
+        )
 
         # Capture GPS de l'étape
         location = Point(float(lng), float(lat), srid=4326) if lat and lng else None
@@ -203,19 +268,32 @@ class MissionViewSet(viewsets.ModelViewSet):
     def _finalize_mission(self, mission):
         """ Fermeture et Paiement """
         if mission.status == MissionStatus.COMPLETED:
-             return Response({"detail": _("Déjà payé.")})
+            return Response(
+                {"detail": _("Mission déjà finalisée.")},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         mission.status = MissionStatus.COMPLETED
         mission.save()
-        
+
+        # Libérer le séquestre si existant
+        if hasattr(mission, 'escrow') and mission.escrow:
+            from apps.core.choices import EscrowStatus
+            from django.utils import timezone
+            escrow = mission.escrow
+            if escrow.status != EscrowStatus.RELEASED:
+                escrow.status = EscrowStatus.RELEASED
+                escrow.released_at = timezone.now()
+                escrow.save()
+
         self._add_to_timeline(mission, MissionStatus.COMPLETED, _("Mission validée. Fonds libérés."), self.request)
-        
+
         NotificationService.send_to_user(
             user=mission.agent,
             title=_("Argent reçu !"),
             body=_("Le client a validé. Votre solde a été mis à jour.")
         )
-        return Response({"status": _("Succès.")})
+        return Response({"status": _("Succès."), "detail": _("Mission finalisée.")})
 
     def _add_to_timeline(self, mission, status, message, request=None, location=None):
         """ Utilitaire pour remplir la Timeline automatiquement """

@@ -84,11 +84,18 @@ def create_user_wallet_and_referral(sender, instance, created, **kwargs):
         Wallet.objects.get_or_create(user=instance)
         
         # Envoyer l'email de bienvenue de manière asynchrone via Celery
-        send_welcome_email_task.delay(
-            user_id=instance.id,
-            user_email=instance.email,
-            username=instance.get_full_name() or instance.username
-        )
+        try:
+            send_welcome_email_task.delay(
+                user_id=instance.id,
+                user_email=instance.email,
+                username=instance.get_full_name() or instance.username
+            )
+        except Exception as e:
+            # Logger l'erreur mais ne pas bloquer la création de l'utilisateur
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Erreur lors de l'envoi de l'email de bienvenue: {e}")
+            print(f"DEBUG SIGNAL: Erreur email welcome - {e}")
         
         # Si parrainé, on peut envoyer une notification au parrain
         if instance.referred_by:

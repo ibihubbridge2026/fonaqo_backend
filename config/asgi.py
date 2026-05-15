@@ -13,14 +13,19 @@ django_asgi_app = get_asgi_application()
 
 # 4. IMPORTE LES ROUTINGS APRÈS L'INITIALISATION
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
-import apps.chat.routing 
+
+import apps.chat.routing
+import apps.missions.routing
+from apps.chat.middleware import JwtWsAuthMiddleware
+
+_ws_patterns = (
+    apps.chat.routing.websocket_urlpatterns
+    + apps.missions.routing.websocket_urlpatterns
+)
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(
-        URLRouter(
-            apps.chat.routing.websocket_urlpatterns
-        )
+    "websocket": JwtWsAuthMiddleware(
+        URLRouter(_ws_patterns)
     ),
 })

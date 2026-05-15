@@ -20,4 +20,5 @@ class AgentService(models.Model):
     successful_missions = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-        return f"{self.title} by {self.agent.username}"
+        agent_name = self.agent.username or self.agent.email or f"Agent-{self.agent.id}"
+        return f"{self.title} by {agent_name}"

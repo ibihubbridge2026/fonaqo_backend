@@ -34,7 +34,8 @@ class Wallet(models.Model):
         verbose_name_plural = _("Portefeuilles")
 
     def __str__(self):
-        return f"Wallet {self.user.phone_number} ({self.balance} FCFA)"
+        user_identifier = self.user.phone_number or self.user.email or self.user.username or f"User-{self.user.id}"
+        return f"Wallet {user_identifier} ({self.balance} FCFA)"
 
 
 class Transaction(models.Model):

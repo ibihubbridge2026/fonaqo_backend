@@ -152,3 +152,17 @@ sudo fuser -k 5432/tcp
 docker compose logs -f web
 
 docker run -p 1080:1080 -p 1025:1025 maildev/maildev
+
+# En développement
+flutter run --dart-define=SERVER_URL=http://localhost:8000
+
+# En production  
+flutter run --dart-define=SERVER_URL=https://api.fonaqo.com
+
+# Ça corrige :
+imports
+APIs dépréciées
+erreurs lint
+warnings automatiques
+
+dart fix --apply
