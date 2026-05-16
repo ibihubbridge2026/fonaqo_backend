@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import BoostPlan, AgentBoost
-from apps.accounts.serializers import AgentProfileSerializer
+from apps.accounts.serializers import UserSerializer
 
 
 class BoostPlanSerializer(serializers.ModelSerializer):
@@ -21,7 +21,7 @@ class AgentBoostSerializer(serializers.ModelSerializer):
     """Serializer pour les boosts d'agents"""
     plan = BoostPlanSerializer(read_only=True)
     plan_id = serializers.IntegerField(write_only=True, required=False)
-    agent = AgentProfileSerializer(read_only=True)
+    agent = UserSerializer(read_only=True)
     time_remaining_seconds = serializers.ReadOnlyField()
     time_remaining_display = serializers.ReadOnlyField()
     is_currently_active = serializers.ReadOnlyField()

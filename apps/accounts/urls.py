@@ -10,6 +10,7 @@ from .views import (
     agent_suggestions_view,
     change_password_view,
     update_phone_view,
+    agent_status_view,
 )
 
 urlpatterns = [
@@ -21,5 +22,6 @@ urlpatterns = [
     path('agents/suggestions/', agent_suggestions_view, name='agent-suggestions'),
     path('password/change/', change_password_view, name='password-change'),
     path('update-phone/', update_phone_view, name='update-phone'),
+    path('agent/status/', agent_status_view, name='agent-status'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
 ]

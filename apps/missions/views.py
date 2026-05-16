@@ -42,8 +42,8 @@ class MissionViewSet(viewsets.ModelViewSet):
         queryset = Mission.objects.filter(status=MissionStatus.PENDING).select_related('client')
         
         # Filtrage par localisation si fourni
-        lat = request.GET.get('lat')
-        lng = request.GET.get('lng')
+        lat = request.GET.get('latitude') or request.GET.get('lat')
+        lng = request.GET.get('longitude') or request.GET.get('lng')
         
         if lat and lng:
             try:

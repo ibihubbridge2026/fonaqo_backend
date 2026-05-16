@@ -17,6 +17,7 @@ class User(AbstractUser):
     is_agent = models.BooleanField(_('est agent terrain'), default=False)
     is_client = models.BooleanField(_('est client'), default=True)
     is_verified = models.BooleanField(_('profil vérifié (KYC)'), default=False)
+    is_online = models.BooleanField(_('est en ligne'), default=False)
     kyc_status = models.CharField(
         max_length=20,
         choices=KYCStatus.choices,

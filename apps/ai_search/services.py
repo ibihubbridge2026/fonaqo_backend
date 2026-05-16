@@ -14,13 +14,14 @@ class AISearchService:
     def __init__(self):
         self.max_suggestions = 10
         
-    def search(self, query: str, user) -> Dict[str, Any]:
+    def search(self, query: str, user, search_type: str = 'general') -> Dict[str, Any]:
         """
         Effectue une recherche IA et retourne une réponse structurée
         
         Args:
             query: La requête de l'utilisateur
             user: L'utilisateur qui effectue la recherche
+            search_type: Type de recherche ('agent', 'mission', 'general')
             
         Returns:
             Dict contenant la réponse IA et métadonnées
@@ -29,7 +30,7 @@ class AISearchService:
             # TODO: Intégrer avec un vrai service IA (OpenAI, Claude, etc.)
             # Pour l'instant, simulation de réponses intelligentes
             
-            response = self._simulate_ai_response(query, user)
+            response = self._simulate_ai_response(query, user, search_type)
             
             return {
                 'status': 'success',
@@ -49,43 +50,110 @@ class AISearchService:
                 'timestamp': timezone.now().isoformat()
             }
     
-    def _simulate_ai_response(self, query: str, user) -> Dict[str, Any]:
+    def _simulate_ai_response(self, query: str, user, search_type: str) -> Dict[str, Any]:
         """
-        Simulation de réponses IA basées sur des patterns
+        Simulation de réponses IA basées sur des patterns et le type de recherche
         
         Args:
             query: La requête de l'utilisateur
             user: L'utilisateur
+            search_type: Type de recherche ('agent', 'mission', 'general')
             
         Returns:
             Dict avec la réponse simulée
         """
         query_lower = query.lower()
         
-        # Patterns de recherche pour missions
-        if any(keyword in query_lower for keyword in ['mission', 'livraison', 'course']):
+        # Recherche spécifique pour les agents
+        if search_type == 'agent':
+            return {
+                'type': 'agent_search',
+                'results': [
+                    {
+                        'id': 1,
+                        'fullName': 'Jean Dupont',
+                        'rating': 4.8,
+                        'completedMissions': 156,
+                        'responseTime': '15 min',
+                        'avatarUrl': 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jean',
+                        'isOnline': True,
+                        'isVerified': True,
+                        'specialties': ['Livraison', 'Transport', 'Course']
+                    },
+                    {
+                        'id': 2,
+                        'fullName': 'Marie Kouame',
+                        'rating': 4.6,
+                        'completedMissions': 98,
+                        'responseTime': '20 min',
+                        'avatarUrl': 'https://api.dicebear.com/7.x/avataaars/svg?seed=Marie',
+                        'isOnline': True,
+                        'isVerified': True,
+                        'specialties': ['Ménage', 'Cuisine', 'Soutien scolaire']
+                    }
+                ],
+                'total_results': 2,
+                'suggestion': f'Agents trouvés pour "{query}"'
+            }
+        
+        # Recherche spécifique pour les missions
+        elif search_type == 'mission':
             return {
                 'type': 'mission_search',
                 'results': [
                     {
-                        'title': 'Livraison urgente - Centre ville',
-                        'distance': '2.3 km',
-                        'price': '2500 FCFA',
-                        'urgency': 'high'
+                        'id': 1,
+                        'title': 'Livraison colis - Centre ville',
+                        'description': 'Livraison urgente d\'un colis au centre commercial',
+                        'price': 2500.0,
+                        'status': 'available',
+                        'address': 'Centre commercial, Abidjan',
+                        'category': 'Livraison',
+                        'isUrgent': True,
+                        'clientName': 'Entreprise ABC',
+                        'createdAt': '2024-01-15T10:30:00Z'
                     },
                     {
+                        'id': 2,
                         'title': 'Course restaurant - Akpakla',
-                        'distance': '5.1 km', 
-                        'price': '1800 FCFA',
-                        'urgency': 'medium'
+                        'description': 'Aller chercher une commande au restaurant',
+                        'price': 1800.0,
+                        'status': 'available',
+                        'address': 'Restaurant Le Gourmet, Akpakla',
+                        'category': 'Course',
+                        'isUrgent': False,
+                        'clientName': 'Paul Koffi',
+                        'createdAt': '2024-01-15T11:15:00Z'
                     }
                 ],
                 'total_results': 2,
+                'suggestion': f'Missions disponibles pour "{query}"'
+            }
+        
+        # Patterns de recherche pour missions (recherche générale)
+        elif search_type == 'general' and any(keyword in query_lower for keyword in ['mission', 'livraison', 'course']):
+            return {
+                'type': 'mission_search',
+                'results': [
+                    {
+                        'id': 1,
+                        'title': 'Livraison urgente - Centre ville',
+                        'description': 'Livraison urgente d\'un colis',
+                        'price': 2500.0,
+                        'status': 'available',
+                        'address': 'Centre ville, Abidjan',
+                        'category': 'Livraison',
+                        'isUrgent': True,
+                        'clientName': 'Entreprise XYZ',
+                        'createdAt': '2024-01-15T10:30:00Z'
+                    }
+                ],
+                'total_results': 1,
                 'suggestion': 'Ces missions correspondent à votre recherche'
             }
         
-        # Patterns de recherche pour services
-        elif any(keyword in query_lower for keyword in ['service', 'aide', 'réparation']):
+        # Patterns de recherche pour services (recherche générale)
+        elif search_type == 'general' and any(keyword in query_lower for keyword in ['service', 'aide', 'réparation']):
             return {
                 'type': 'service_search',
                 'results': [
@@ -111,7 +179,7 @@ class AISearchService:
             return {
                 'type': 'general_search',
                 'results': [],
-                'suggestion': 'Je n\'ai pas trouvé de résultats spécifiques. Essayez avec "mission", "livraison" ou "service".'
+                'suggestion': 'Je n\'ai pas trouvé de résultats spécifiques. Essayez avec "agent", "mission", "livraison" ou "service".'
             }
     
     @transaction.atomic

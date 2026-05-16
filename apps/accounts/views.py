@@ -229,50 +229,86 @@ def google_auth_view(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['PATCH'])
+@api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def update_phone_view(request):
-    """
-    Vue pour mettre à jour le numéro de téléphone de l'utilisateur
-    PATCH: Met à jour uniquement le numéro de téléphone
-    """
-    user = request.user
-    phone_number = request.data.get('phone_number')
-    
-    if not phone_number:
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Le numéro de téléphone est requis',
-            'data': {}
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Vérifier si le numéro de téléphone est déjà utilisé par un autre utilisateur
-    if User.objects.filter(phone_number=phone_number).exclude(pk=user.pk).exists():
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Ce numéro de téléphone est déjà utilisé',
-            'data': {}
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
+    """Met à jour le numéro de téléphone de l'utilisateur"""
     try:
-        user.phone_number = phone_number
-        user.save()
+        new_phone = request.data.get('phone_number')
         
-        # Retourner les données utilisateur mises à jour
-        user_serializer = UserSerializer(user)
+        if not new_phone:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Numéro de téléphone requis',
+                'data': {}
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Vérifier si le numéro est déjà utilisé
+        if User.objects.filter(phone_number=new_phone).exclude(id=request.user.id).exists():
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Ce numéro de téléphone est déjà utilisé',
+                'data': {}
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Mettre à jour le numéro
+        request.user.phone_number = new_phone
+        request.user.save()
+        
+        logger.info("Numéro de téléphone mis à jour pour user=%s", request.user.username)
+        
         return JsonResponse({
             'status': 'success',
             'message': 'Numéro de téléphone mis à jour avec succès',
+            'data': {'phone_number': new_phone}
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error("Erreur mise à jour téléphone: %s", str(e))
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Erreur lors de la mise à jour du numéro de téléphone',
+            'data': {}
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def agent_status_view(request):
+    """Met à jour le statut en ligne/hors ligne de l'agent"""
+    try:
+        # Vérifier que l'utilisateur est un agent
+        if not request.user.is_agent:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Accès refusé. Cette fonctionnalité est réservée aux agents.',
+                'data': {}
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Récupérer le nouveau statut
+        is_online = request.data.get('is_online', False)
+        
+        # Mettre à jour le statut (pour l'instant on utilise un champ temporaire)
+        # TODO: Ajouter un champ is_online dans le modèle User quand nécessaire
+        request.user.is_online = is_online
+        request.user.save()
+        
+        logger.info("Statut agent mis à jour: user=%s, is_online=%s", request.user.username, is_online)
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': f'Statut mis à jour: {"en ligne" if is_online else "hors ligne"}',
             'data': {
-                'user': user_serializer.data
+                'is_online': is_online,
+                'user_id': str(request.user.id)
             }
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
-        logger.error(f'Erreur lors de la mise à jour du téléphone: {e}')
+        logger.error("Erreur mise à jour statut agent: %s", str(e))
         return JsonResponse({
             'status': 'error',
-            'message': f'Erreur lors de la mise à jour: {str(e)}',
+            'message': 'Erreur lors de la mise à jour du statut',
             'data': {}
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

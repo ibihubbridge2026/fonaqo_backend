@@ -9,6 +9,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fonaqo_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fonaqo} -d ${POSTGRES_DB:-fonaqo_db}"]
       interval: 10s
@@ -19,6 +21,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    networks:
+      - fonaqo_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -35,6 +39,8 @@ services:
       - .:/app
     ports:
       - "8000:8000"
+    networks:
+      - fonaqo_network
     depends_on:
       db:
         condition: service_healthy
@@ -48,6 +54,8 @@ services:
       - .env
     volumes:
       - .:/app
+    networks:
+      - fonaqo_network
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +69,8 @@ services:
       - .env
     volumes:
       - .:/app
+    networks:
+      - fonaqo_network
     depends_on:
       db:
         condition: service_healthy
@@ -69,3 +79,7 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  fonaqo_network:
+    driver: bridge

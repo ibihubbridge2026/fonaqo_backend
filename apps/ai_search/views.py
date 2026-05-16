@@ -20,6 +20,7 @@ class AISearchViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Effectue une recherche IA et sauvegarde le résultat"""
         query = request.data.get('query', '').strip()
+        search_type = request.data.get('type', 'general').strip()
         
         if not query:
             return Response(
@@ -27,9 +28,14 @@ class AISearchViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Valider le type de recherche
+        valid_types = ['agent', 'mission', 'general']
+        if search_type not in valid_types:
+            search_type = 'general'
+        
         # Utiliser le service IA pour traiter la requête
         ai_service = AISearchService()
-        response = ai_service.search(query, request.user)
+        response = ai_service.search(query, request.user, search_type)
         
         # Sauvegarder la recherche
         search_query = AISearchQuery.objects.create(

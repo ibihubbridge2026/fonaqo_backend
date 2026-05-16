@@ -87,8 +87,6 @@ INSTALLED_APPS = [
     'apps.opportunities.apps.OpportunitiesConfig',
     'apps.boosts.apps.BoostsConfig',
     'apps.disputes.apps.DisputesConfig',
-    'apps.chat_enhanced.apps.ChatEnhancedConfig',
-    'apps.missions_enhanced.apps.MissionsEnhancedConfig',
     'apps.statistics.apps.StatisticsConfig',
 
     #celery

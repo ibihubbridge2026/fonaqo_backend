@@ -51,7 +51,7 @@ class AgentBoost(models.Model):
     ]
 
     agent = models.ForeignKey(
-        'accounts.AgentProfile',
+        User,
         on_delete=models.CASCADE,
         related_name='boosts'
     )

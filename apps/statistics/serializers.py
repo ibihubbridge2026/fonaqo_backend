@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import AgentStatistics
-from apps.accounts.serializers import AgentProfileSerializer
+from apps.accounts.serializers import UserSerializer
 from django.db.models import Count, Sum, Avg, Q
 from datetime import datetime, timedelta
 from django.utils import timezone
@@ -8,7 +8,7 @@ from django.utils import timezone
 
 class AgentStatisticsSerializer(serializers.ModelSerializer):
     """Serializer pour les statistiques d'agent"""
-    agent = AgentProfileSerializer(read_only=True)
+    agent = UserSerializer(read_only=True)
     success_rate = serializers.ReadOnlyField()
     level = serializers.ReadOnlyField()
     

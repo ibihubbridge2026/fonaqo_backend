@@ -7,7 +7,7 @@ class AgentStatistics(models.Model):
     Calculées et mises à jour régulièrement
     """
     agent = models.OneToOneField(
-        'accounts.AgentProfile',
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='detailed_statistics'
     )

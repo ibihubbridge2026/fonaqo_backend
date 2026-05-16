@@ -62,6 +62,7 @@ Ce document est ta référence pour installer, piloter et maintenir le backend F
   - `docker compose down -v` (Attention : supprime les données de la base).
 - **Nettoyer les caches Python** :
   - `find . -name "__pycache__" -delete`
+  
 - **Réinitialiser le scheduler Celery** :
   - `rm celerybeat-schedule.db` (À faire si les tâches planifiées ne se lancent plus).
 
@@ -143,7 +144,7 @@ docker compose up -d
 sudo systemctl stop redis-server
 # Tue de force tout ce qui utilise le port 6379
 sudo fuser -k 6379/tcp
-
+sudo systemctl stop redis-server
 # Voir qui utilise le port 5432
 sudo lsof -i :5432
 
