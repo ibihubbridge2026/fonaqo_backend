@@ -1,5 +1,10 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import WithdrawalViewSet
+
+router = DefaultRouter()
+router.register(r'withdraw', WithdrawalViewSet, basename='withdrawal')
 
 urlpatterns = [
-    # Les routes seront ajoutées ici plus tard
+    path('', include(router.urls)),
 ]

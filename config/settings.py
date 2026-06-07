@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -37,22 +38,19 @@ SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-# ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*"] if DEBUG else ["localhost", "127.0.0.1"])
-# CORS_ALLOW_ALL_ORIGINS = DEBUG
-# CORS_ALLOWED_ORIGINS = env.list(
-#     "CORS_ALLOWED_ORIGINS",
-#     default=["http://localhost:3000", "http://127.0.0.1:3000"],
-# )
+if DEBUG:
+    ALLOWED_HOSTS = ["*", "192.168.1.73", "localhost", "127.0.0.1"]
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 
-# 2. Autorise explicitement ton IP et le wildcard
-ALLOWED_HOSTS = ["*", "192.168.1.73", "localhost", "127.0.0.1"]
-
-# 3. CORS : Indispensable pour que Flutter (considéré comme une origine différente) puisse parler à Django
-CORS_ALLOW_ALL_ORIGINS = True  # Autorise tout en développement
 CORS_ALLOW_CREDENTIALS = True
-
-# Optionnel : Si tu utilises CSRF
-CSRF_TRUSTED_ORIGINS = ["http://192.168.1.73:8000", "http://localhost:8000"]
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=["http://192.168.1.73:8000", "http://localhost:8000"],
+)
 # Application definition
 
 INSTALLED_APPS = [
@@ -268,3 +266,17 @@ FIREBASE_KEY_PATH = env("FIREBASE_KEY_PATH", default=FIREBASE_KEY_PATH)
 if os.path.exists(FIREBASE_KEY_PATH):
     cred = credentials.Certificate(FIREBASE_KEY_PATH)
     firebase_admin.initialize_app(cred)
+
+# Mistral AI Configuration (Recherche IA)
+MISTRAL_API_KEY = env("MISTRAL_API_KEY", default="")
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'UPDATE_LAST_LOGIN': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}

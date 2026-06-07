@@ -49,19 +49,72 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    """Inscription unique : rôle client/agent + email optionnel."""
+    """Inscription unique : rôle client/agent + email optionnel. Username auto-généré."""
 
     role = serializers.ChoiceField(
         choices=["client", "agent"],
         write_only=True,
         default="client",
         required=False,
+        error_messages={
+            'invalid_choice': 'Le rôle doit être "client" ou "agent".'
+        }
     )
-    email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
+    email = serializers.EmailField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'invalid': 'Adresse email invalide.',
+            'required': 'Ce champ est obligatoire.'
+        }
+    )
+    username = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'required': 'Ce champ est obligatoire.',
+            'blank': 'Ce champ ne peut pas être vide.'
+        }
+    )
+    first_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        error_messages={
+            'required': 'Ce champ est obligatoire.',
+            'blank': 'Ce champ ne peut pas être vide.'
+        }
+    )
+    last_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        error_messages={
+            'required': 'Ce champ est obligatoire.',
+            'blank': 'Ce champ ne peut pas être vide.'
+        }
+    )
+    phone_number = serializers.CharField(
+        error_messages={
+            'required': 'Le numéro de téléphone est obligatoire.',
+            'blank': 'Le numéro de téléphone ne peut pas être vide.'
+        }
+    )
+    password = serializers.CharField(
+        write_only=True,
+        error_messages={
+            'required': 'Le mot de passe est obligatoire.',
+            'blank': 'Le mot de passe ne peut pas être vide.'
+        }
+    )
 
     class Meta:
         model = User
-        fields = ("email", "phone_number", "username", "password", "role")
+        fields = ("email", "phone_number", "username", "password", "role", "first_name", "last_name")
+        error_messages = {
+            'required': 'Ce champ est obligatoire.',
+        }
 
     def validate_phone_number(self, value):
         if User.objects.filter(phone_number=value).exists():
@@ -70,19 +123,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
         return value
 
-    def validate_username(self, value):
-        if not value or not str(value).strip():
-            raise serializers.ValidationError("Le nom d'utilisateur est requis.")
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Ce nom d'utilisateur est déjà utilisé.")
-        return value
-
     def validate(self, attrs):
         phone = attrs.get("phone_number")
-        username = attrs.get("username")
         password = attrs.get("password")
-        if not all([phone, username, password]):
-            raise serializers.ValidationError("Tous les champs obligatoires doivent être remplis.")
+        if not all([phone, password]):
+            raise serializers.ValidationError("Le numéro de téléphone et le mot de passe sont obligatoires.")
         if len(str(password)) < 8:
             raise serializers.ValidationError(
                 {"password": "Le mot de passe doit contenir au moins 8 caractères."}
@@ -97,23 +142,41 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         role = validated_data.pop("role", "client")
         email = (validated_data.pop("email", None) or "").strip()
+        first_name = validated_data.pop("first_name", "") or ""
+        last_name = validated_data.pop("last_name", "") or ""
 
+        phone = str(validated_data["phone_number"])
+        safe_phone = "".join(c for c in phone if c.isalnum())
+
+        # Auto-génération de l'email si absent
         if not email:
-            safe_phone = "".join(
-                c for c in str(validated_data["phone_number"]) if c.isalnum()
-            )
-            email = f"fonaco_{safe_phone or uuid.uuid4().hex[:10]}@internal.fonaco.local"
+            email = f"fonaqo_{safe_phone or uuid.uuid4().hex[:10]}@internal.fonaqo.local"
             while User.objects.filter(email=email).exists():
-                email = f"fonaco_{safe_phone}_{uuid.uuid4().hex[:6]}@internal.fonaco.local"
+                email = f"fonaqo_{safe_phone}_{uuid.uuid4().hex[:6]}@internal.fonaqo.local"
 
-        validated_data["email"] = email
+        # Auto-génération du username si absent
+        username = (validated_data.pop("username", None) or "").strip()
+        if not username:
+            username = first_name.lower() or f"user_{safe_phone[-6:] or uuid.uuid4().hex[:6]}"
+            base = username
+            counter = 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base}{counter}"
+                counter += 1
+        elif User.objects.filter(username=username).exists():
+            base = username
+            counter = 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base}{counter}"
+                counter += 1
 
-        # USERNAME_FIELD = phone_number : utiliser uniquement des arguments nommés pour éviter les conflits
         user = User.objects.create_user(
-            phone_number=validated_data["phone_number"],  # USERNAME_FIELD
-            email=validated_data["email"],
+            phone_number=validated_data["phone_number"],
+            email=email,
             password=validated_data["password"],
-            username=validated_data["username"],  # REQUIRED_FIELDS
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
         )
         if role == "agent":
             user.is_agent = True
@@ -127,8 +190,21 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=20)
-    password = serializers.CharField(write_only=True)
+    phone_number = serializers.CharField(
+        max_length=20,
+        error_messages={
+            'required': 'Le numéro de téléphone est obligatoire.',
+            'blank': 'Le numéro de téléphone ne peut pas être vide.',
+            'max_length': 'Le numéro de téléphone est trop long.'
+        }
+    )
+    password = serializers.CharField(
+        write_only=True,
+        error_messages={
+            'required': 'Le mot de passe est obligatoire.',
+            'blank': 'Le mot de passe ne peut pas être vide.'
+        }
+    )
 
     def validate(self, data):
         phone_number = data.get("phone_number")
@@ -159,6 +235,31 @@ class LoginSerializer(serializers.Serializer):
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'required': 'Le prénom est obligatoire.',
+            'blank': 'Le prénom ne peut pas être vide.'
+        }
+    )
+    last_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'required': 'Le nom est obligatoire.',
+            'blank': 'Le nom ne peut pas être vide.'
+        }
+    )
+    email = serializers.EmailField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'invalid': 'Adresse email invalide.',
+            'required': 'L\'email est obligatoire.'
+        }
+    )
+
     class Meta:
         model = User
         fields = (
@@ -176,6 +277,9 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "witness_2_phone",
         )
         read_only_fields = ("phone_number",)
+        error_messages = {
+            'required': 'Ce champ est obligatoire.',
+        }
 
     def validate_phone_number(self, value):
         if not value:

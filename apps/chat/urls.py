@@ -1,8 +1,12 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
 
+router = DefaultRouter()
+router.register(r'conversations', views.ConversationViewSet, basename='conversations')
+router.register(r'messages', views.MessageViewSet, basename='messages')
+router.register(r'typing', views.TypingStatusViewSet, basename='typing-status')
+
 urlpatterns = [
-    path('', views.message_list_view, name='message-list'),
-    path('create/', views.message_create_view, name='message-create'),
-    path('<uuid:message_id>/mark-read/', views.mark_message_read_view, name='mark-message-read'),
+    path('', include(router.urls)),
 ]

@@ -1,306 +1,1026 @@
-import logging
-
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework import viewsets, permissions, status, pagination
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from django.http import JsonResponse
-from django.contrib.gis.geos import Point
-from django.contrib.gis.db.models.functions import Distance
-from django.utils.translation import gettext_lazy as _
-from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from django.db.models import Count, Sum, Avg
+from django.db import transaction
+from datetime import datetime, timedelta
+from django.utils import timezone
+from django.http import HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.units import inch
+import openai
+import json
+import os
+from .models import Mission, MissionProof, MissionTimelineEvent, AgentStatistics
+from .serializers import (
+    MissionProofSerializer, MissionProofCreateSerializer,
+    MissionTimelineEventSerializer, MissionTimelineEventCreateSerializer,
+    AgentStatisticsSerializer, AgentDashboardStatsSerializer,
+    MissionProofBulkCreateSerializer, MissionDetailSerializer, MissionCreateSerializer,
+)
+from apps.wallets.models import Wallet, Transaction
+from apps.escrow.models import Escrow
+from apps.core.choices import TransactionStatus, EscrowStatus
 
-from .models import Mission, MissionTimeline, Dispute
-from .serializers import MissionSerializer
-from .ws_broadcast import broadcast_gps_group
 
-logger = logging.getLogger(__name__)
-from apps.accounts.permissions import IsVerifiedAgent
-from apps.notifications.services import NotificationService
-from apps.core.choices import MissionStatus
+class MissionPagination(pagination.PageNumberPagination):
+    """Pagination personnalisée pour les missions (20 par page)"""
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
-class MissionViewSet(viewsets.ModelViewSet):
-    """
-    Moteur de Mission FONAQO :
-    Gère la proximité, la Timeline GPS, l'Escrow et la Sécurité.
-    """
-    queryset = Mission.objects.all()
-    serializer_class = MissionSerializer
+_STATUS_EVENT_MAP = {
+    'ON_THE_WAY': 'agent_en_route',
+    'ARRIVED': 'agent_arrived',
+    'IN_PROGRESS': 'in_progress',
+    'COMPLETED': 'completed',
+    'CANCELLED': 'cancelled',
+    'ACCEPTED': 'accepted',
+    'PENDING': 'created',
+    'DISPUTED': 'disputed',
+}
+
+
+class MissionViewSet(viewsets.ViewSet):
+    """CRUD principal des missions + actions métier."""
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = MissionPagination
 
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def available(self, request):
+    def _get_mission(self, pk, user):
+        """Récupère une mission et vérifie que l'utilisateur est client ou agent."""
+        mission = get_object_or_404(Mission, pk=pk)
+        if mission.client != user and mission.agent != user:
+            return None, Response(
+                {'status': 'error', 'message': 'Permission refusée'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return mission, None
+
+    def _log_event(self, mission, event_type, user, request_data=None):
+        request_data = request_data or {}
+        MissionTimelineEvent.objects.create(
+            mission=mission,
+            event_type=event_type,
+            performed_by=user,
+            location_lat=request_data.get('latitude'),
+            location_lng=request_data.get('longitude'),
+            notes=request_data.get('notes', ''),
+        )
+
+    def _lock_funds_in_escrow(self, mission):
+        """Bloque les fonds du client en escrow lors de l'acceptation/démarrage"""
+        client_wallet, _ = Wallet.objects.get_or_create(user=mission.client)
+        total_amount = mission.price + mission.service_fee
+
+        if client_wallet.balance < total_amount:
+            raise ValueError("Solde client insuffisant pour bloquer les fonds")
+
+        with transaction.atomic():
+            # Déduire du solde du client
+            client_wallet.balance -= total_amount
+            client_wallet.escrow_balance += total_amount
+            client_wallet.save()
+
+            # Créer ou mettre à jour l'escrow
+            escrow, created = Escrow.objects.get_or_create(
+                mission=mission,
+                defaults={'amount': total_amount, 'status': EscrowStatus.HELD}
+            )
+            if not created:
+                escrow.amount = total_amount
+                escrow.status = EscrowStatus.HELD
+                escrow.save()
+
+            # Enregistrer la transaction
+            Transaction.objects.create(
+                wallet=client_wallet,
+                amount=total_amount,
+                transaction_type=Transaction.TransactionType.ESCROW_LOCK,
+                status=TransactionStatus.COMPLETED,
+                description=f"Séquestre pour mission {mission.id}"
+            )
+
+    def _release_funds_from_escrow(self, mission):
+        """Libère les fonds de l'escrow vers le wallet de l'agent"""
+        if not mission.agent:
+            raise ValueError("Aucun agent assigné à cette mission")
+
+        client_wallet, _ = Wallet.objects.get_or_create(user=mission.client)
+        agent_wallet, _ = Wallet.objects.get_or_create(user=mission.agent)
+
+        try:
+            escrow = Escrow.objects.get(mission=mission)
+        except Escrow.DoesNotExist:
+            raise ValueError("Aucun escrow trouvé pour cette mission")
+
+        with transaction.atomic():
+            # Libérer du séquestre du client
+            client_wallet.escrow_balance -= escrow.amount
+            client_wallet.save()
+
+            # Ajouter au wallet de l'agent
+            agent_wallet.balance += escrow.amount
+            agent_wallet.save()
+
+            # Mettre à jour l'escrow
+            escrow.status = EscrowStatus.RELEASED
+            escrow.released_at = timezone.now()
+            escrow.save()
+
+            # Enregistrer la transaction pour l'agent
+            Transaction.objects.create(
+                wallet=agent_wallet,
+                amount=escrow.amount,
+                transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
+                status=TransactionStatus.COMPLETED,
+                description=f"Libération séquestre mission {mission.id}"
+            )
+
+    def _release_purchase_to_agent(self, mission):
+        """Transfère immédiatement le montant des achats du client vers l'agent.
+
+        Déclenché à l'acceptation de la mission : contrairement aux frais de
+        prestation (séquestre), le montant des achats est débloqué tout de suite
+        pour que l'agent puisse avancer les frais réels (courses, taxes, etc.).
         """
-        Liste des missions disponibles (publiques) - accessible uniquement pour les agents
-        """
-        logger.debug("available missions user=%s is_agent=%s", request.user, request.user.is_agent)
-        if not request.user.is_agent:
-            return JsonResponse({
-                'status': 'error',
-                'message': 'Accès refusé. Cette fonctionnalité est réservée aux agents.',
-                'data': {}
-            }, status=status.HTTP_403_FORBIDDEN)
-        queryset = Mission.objects.filter(status=MissionStatus.PENDING).select_related('client')
+        if not mission.agent:
+            raise ValueError("Aucun agent assigné à cette mission")
+
+        if mission.purchase_released or mission.purchase_amount <= 0:
+            return
+
+        client_wallet, _ = Wallet.objects.get_or_create(user=mission.client)
+        agent_wallet, _ = Wallet.objects.get_or_create(user=mission.agent)
+
+        amount = mission.purchase_amount
+        if client_wallet.balance < amount:
+            raise ValueError("Solde client insuffisant pour débloquer les achats")
+
+        with transaction.atomic():
+            # Débit immédiat du client
+            client_wallet.balance -= amount
+            client_wallet.save(update_fields=["balance", "updated_at"])
+
+            # Crédit immédiat de l'agent
+            agent_wallet.balance += amount
+            agent_wallet.save(update_fields=["balance", "updated_at"])
+
+            # Marquer comme transféré pour éviter un double déblocage
+            mission.purchase_released = True
+            mission.save(update_fields=["purchase_released", "updated_at"])
+
+            # Logs de transaction
+            Transaction.objects.create(
+                wallet=client_wallet,
+                mission=mission,
+                amount=-amount,
+                transaction_type=Transaction.TransactionType.TRANSFER,
+                status=TransactionStatus.COMPLETED,
+                description=f"Déblocage achats mission {mission.id}",
+            )
+            Transaction.objects.create(
+                wallet=agent_wallet,
+                mission=mission,
+                amount=amount,
+                transaction_type=Transaction.TransactionType.TRANSFER,
+                status=TransactionStatus.COMPLETED,
+                description=f"Avance achats reçue mission {mission.id}",
+            )
+
+    # ------------------------------------------------------------------
+    # Standard CRUD
+    # ------------------------------------------------------------------
+
+    def list(self, request):
+        user = request.user
+        if user.is_agent:
+            qs = Mission.objects.filter(
+                status='PENDING', agent__isnull=True
+            ).select_related('client').order_by('-created_at')
+        else:
+            qs = Mission.objects.filter(client=user).select_related('agent').order_by('-created_at')
+
+        # Apply pagination
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request)
+        if page is not None:
+            serializer = MissionDetailSerializer(page, many=True)
+            return Response({
+                'status': 'success',
+                'message': 'Missions récupérées',
+                'data': paginator.get_paginated_response(serializer.data).data
+            })
         
-        # Filtrage par localisation si fourni
-        lat = request.GET.get('latitude') or request.GET.get('lat')
-        lng = request.GET.get('longitude') or request.GET.get('lng')
-        
-        if lat and lng:
-            try:
-                user_location = Point(float(lng), float(lat), srid=4326)
-                queryset = queryset.annotate(
-                    distance=Distance('location', user_location)
-                ).order_by('distance')
-            except (ValueError, TypeError):
-                pass
-        
-        missions_data = [MissionSerializer(m).data for m in queryset]
-        
-        return JsonResponse({
+        serializer = MissionDetailSerializer(qs, many=True)
+        return Response({
             'status': 'success',
-            'message': 'Missions disponibles récupérées',
-            'data': missions_data
+            'message': 'Missions récupérées',
+            'data': {'results': serializer.data}
         })
 
-    def get_queryset(self):
-        queryset = Mission.objects.all().select_related("client", "agent")
-        user = self.request.user
-        lat = self.request.query_params.get('lat')
-        lng = self.request.query_params.get('lng')
+    def retrieve(self, request, pk=None):
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        return Response(MissionDetailSerializer(mission).data)
 
-        if self.action == 'list':
-            if getattr(user, "is_agent", False) and not getattr(user, "is_client", True):
-                queryset = queryset.filter(
-                    Q(status=MissionStatus.PENDING) | Q(agent=user)
-                )
-            elif getattr(user, "is_client", False):
-                queryset = queryset.filter(client=user)
-            else:
-                queryset = queryset.filter(status=MissionStatus.PENDING)
+    def create(self, request):
+        serializer = MissionCreateSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            mission = serializer.save()
+            self._log_event(mission, 'created', request.user)
+            return Response(MissionDetailSerializer(mission).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        if lat and lng:
-            try:
-                user_location = Point(float(lng), float(lat), srid=4326)
-                queryset = queryset.annotate(
-                    distance=Distance('location', user_location)
-                ).order_by('distance')
-            except (ValueError, TypeError):
-                queryset = queryset.order_by("-created_at")
-        else:
-            queryset = queryset.order_by("-created_at")
-        return queryset
+    # ------------------------------------------------------------------
+    # Custom list actions
+    # ------------------------------------------------------------------
 
-    def perform_create(self, serializer):
-        # Création initiale + Première étape Timeline
-        mission = serializer.save(client=self.request.user, status=MissionStatus.PENDING)
-        self._add_to_timeline(mission, MissionStatus.PENDING, _("Mission publiée par le client"))
+    @action(detail=False, methods=['get'])
+    def available(self, request):
+        """Missions PENDING sans agent assigné (pour les agents)."""
+        qs = Mission.objects.filter(status='PENDING', agent__isnull=True).order_by('-created_at')
+        
+        # Apply pagination
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request)
+        if page is not None:
+            serializer = MissionDetailSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+        
+        serializer = MissionDetailSerializer(qs, many=True)
+        return Response(serializer.data)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
+    @action(detail=False, methods=['get'])
+    def history(self, request):
+        """Historique des missions complètes/annulées de l'agent."""
+        limit = int(request.query_params.get('limit', 20))
+        qs = Mission.objects.filter(
+            agent=request.user,
+            status__in=['COMPLETED', 'CANCELLED'],
+        ).order_by('-updated_at')[:limit]
+        return Response({'results': MissionDetailSerializer(qs, many=True).data})
+
+    # ------------------------------------------------------------------
+    # Custom detail actions
+    # ------------------------------------------------------------------
+
+    @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
-        """ L'agent accepte : bloque l'argent en Escrow via Signal """
-        mission = self.get_object()
-        if mission.status != MissionStatus.PENDING:
-            return Response({"detail": _("Indisponible.")}, status=status.HTTP_400_BAD_REQUEST)
+        mission = get_object_or_404(Mission, pk=pk)
+        if mission.status != 'PENDING':
+            return Response(
+                {'status': 'error', 'message': 'Mission non disponible'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        try:
+            # Bloquer les fonds en escrow
+            self._lock_funds_in_escrow(mission)
+        except ValueError as e:
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         mission.agent = request.user
-        mission.status = MissionStatus.ACCEPTED
+        mission.status = 'ACCEPTED'
         mission.save()
 
-        self._add_to_timeline(mission, MissionStatus.ACCEPTED, _("Agent assigné et fonds sécurisés"), request)
-        
-        NotificationService.send_to_user(
-            user=mission.client,
-            title=_("Agent trouvé !"),
-            body=_("{} a accepté votre mission.").format(request.user.username)
-        )
-        broadcast_gps_group(
-            str(mission.id),
-            {"type": "mission_status", "status": mission.status},
-        )
-        return Response({"detail": _("Mission acceptée.")})
+        # Déblocage immédiat du montant des achats vers l'agent (hors séquestre)
+        try:
+            self._release_purchase_to_agent(mission)
+        except ValueError as e:
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
+        self._log_event(mission, 'accepted', request.user)
+        return Response(MissionDetailSerializer(mission).data)
+
+    @action(detail=True, methods=['post'])
     def start_mission(self, request, pk=None):
-        """Passe la mission en IN_PROGRESS (suivi GPS) — réservé à l'agent assigné."""
-        mission = self.get_object()
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
         if mission.agent != request.user:
-            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
-
-        if mission.status not in (
-            MissionStatus.ACCEPTED,
-            MissionStatus.ON_THE_WAY,
-            MissionStatus.ARRIVED,
-        ):
-            return Response(
-                {"detail": _("Impossible de démarrer depuis ce statut.")},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        mission.status = MissionStatus.IN_PROGRESS
+            return Response({'status': 'error', 'message': 'Non autorisé'}, status=status.HTTP_403_FORBIDDEN)
+        mission.status = 'IN_PROGRESS'
         mission.save()
-        self._add_to_timeline(
-            mission, MissionStatus.IN_PROGRESS, _("Mission en cours (suivi GPS)."), request
-        )
-        broadcast_gps_group(
-            str(mission.id),
-            {"type": "mission_status", "status": mission.status},
-        )
-        NotificationService.send_to_user(
-            user=mission.client,
-            title=_("Mission démarrée"),
-            body=_("L'agent a démarré la mission. Suivez sa position en direct."),
-        )
-        return Response(MissionSerializer(mission).data, status=status.HTTP_200_OK)
+        self._log_event(mission, 'in_progress', request.user)
+        return Response(MissionDetailSerializer(mission).data)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsVerifiedAgent])
+    @action(detail=True, methods=['post'])
     def mark_completed_live(self, request, pk=None):
-        """Termine la mission côté agent (flux live / module tracking)."""
-        mission = self.get_object()
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
         if mission.agent != request.user:
-            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
-
-        if mission.status != MissionStatus.IN_PROGRESS:
-            return Response(
-                {"detail": _("La mission doit être en cours pour être clôturée.")},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        mission.status = MissionStatus.COMPLETED
+            return Response({'status': 'error', 'message': 'Non autorisé'}, status=status.HTTP_403_FORBIDDEN)
+        mission.status = 'COMPLETED'
         mission.save()
-        self._add_to_timeline(
-            mission, MissionStatus.COMPLETED, _("Mission terminée par l'agent."), request
-        )
-        broadcast_gps_group(
-            str(mission.id),
-            {"type": "mission_status", "status": mission.status},
-        )
-        NotificationService.send_to_user(
-            user=mission.client,
-            title=_("Mission terminée"),
-            body=_("L'agent a indiqué la mission comme terminée."),
-        )
-        return Response(MissionSerializer(mission).data, status=status.HTTP_200_OK)
+        self._log_event(mission, 'completed', request.user)
+        return Response(MissionDetailSerializer(mission).data)
 
     @action(detail=True, methods=['post'])
     def update_steps(self, request, pk=None):
-        """
-        POINT 1 : Moteur de Timeline (En route, Arrivé, En cours)
-        Nécessite latitude/longitude pour la preuve de présence.
-        """
-        mission = self.get_object()
-        new_status = request.data.get('status')
-        lat = request.data.get('latitude')
-        lng = request.data.get('longitude')
-
-        if mission.agent != request.user:
-            return Response({"detail": _("Non autorisé.")}, status=status.HTTP_403_FORBIDDEN)
-
-        # Validation de l'ordre logique (Optionnel mais recommandé)
-        mission.status = new_status
-        mission.save()
-
-        broadcast_gps_group(
-            str(mission.id),
-            {"type": "mission_status", "status": new_status},
-        )
-
-        # Capture GPS de l'étape
-        location = Point(float(lng), float(lat), srid=4326) if lat and lng else None
-        self._add_to_timeline(mission, new_status, f"Étape : {new_status}", request, location)
-
-        return Response({"status": "Updated", "new_status": new_status})
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        new_status = request.data.get('status', mission.status)
+        if new_status in _STATUS_EVENT_MAP:
+            mission.status = new_status
+            mission.save()
+            self._log_event(mission, _STATUS_EVENT_MAP[new_status], request.user, request.data)
+        return Response(MissionDetailSerializer(mission).data)
 
     @action(detail=True, methods=['post'])
     def submit_completion(self, request, pk=None):
-        """ Soumission de la preuve photo (Fin de mission) """
-        mission = self.get_object()
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
         if mission.agent != request.user:
-            return Response({"detail": _("Accès refusé.")}, status=status.HTTP_403_FORBIDDEN)
-        
-        if 'end_photo' not in request.FILES:
-            return Response({"detail": _("Photo de preuve requise.")}, status=status.HTTP_400_BAD_REQUEST)
-            
-        mission.end_photo = request.FILES['end_photo']
+            return Response({'status': 'error', 'message': 'Non autorisé'}, status=status.HTTP_403_FORBIDDEN)
+        if 'photo' in request.FILES:
+            mission.end_photo = request.FILES['photo']
+        mission.status = 'COMPLETED'
         mission.save()
-        
-        self._add_to_timeline(mission, MissionStatus.COMPLETED, _("Preuve de travail soumise"), request)
-        
-        NotificationService.send_to_user(
-            user=mission.client,
-            title=_("Mission terminée par l'agent"),
-            body=_("Veuillez vérifier et valider pour libérer le paiement.")
-        )
-        return Response({"detail": _("Preuve enregistrée.")})
+        self._log_event(mission, 'proofs_uploaded', request.user)
+        return Response(MissionDetailSerializer(mission).data)
 
     @action(detail=True, methods=['post'])
     def validate_completion(self, request, pk=None):
-        """ Validation finale (Libère l'argent) """
-        mission = self.get_object()
-        method = request.data.get('method') 
-        token = request.data.get('qr_token')
-
-        if method == 'QR_SCAN' and token == mission.qr_code_token:
-            return self._finalize_mission(mission)
-
-        if method == 'CLIENT_CLICK' and request.user == mission.client:
-            return self._finalize_mission(mission)
-
-        return Response({"detail": _("Validation échouée.")}, status=status.HTTP_400_BAD_REQUEST)
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        qr_data = request.data.get('qr_code_data', '')
+        if mission.qr_code_token != qr_data:
+            return Response({'status': 'error', 'message': 'QR Code invalide'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Libérer les fonds de l'escrow vers l'agent
+            self._release_funds_from_escrow(mission)
+        except ValueError as e:
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        self._log_event(mission, 'validated', request.user)
+        return Response({'status': 'success', 'message': 'Mission validée et fonds libérés'})
 
     @action(detail=True, methods=['post'])
     def open_dispute(self, request, pk=None):
-        """ POINT 8 : Ouverture d'un litige """
-        mission = self.get_object()
-        reason = request.data.get('reason')
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        reason = request.data.get('reason', '')
+        description = request.data.get('description', '')
+        mission.status = 'DISPUTED'
+        mission.save()
+        self._log_event(mission, 'disputed', request.user, {'notes': f'{reason}: {description}'})
+        return Response({'status': 'success', 'message': 'Litige ouvert'})
+
+    @action(detail=True, methods=['post'])
+    def rate_client(self, request, pk=None):
+        """Permet à l'agent de noter le client après mission terminée"""
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
         
-        dispute, created = Dispute.objects.get_or_create(
-            mission=mission,
-            defaults={'opened_by': request.user, 'reason': reason}
-        )
+        if mission.agent != request.user:
+            return Response(
+                {'status': 'error', 'message': 'Seul l\'agent assigné peut noter le client'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
-        mission.status = MissionStatus.DISPUTED
+        if mission.status != 'COMPLETED':
+            return Response(
+                {'status': 'error', 'message': 'La mission doit être terminée pour noter'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        rating = request.data.get('rating')
+        comment = request.data.get('comment', '')
+        
+        if not rating or not (1 <= rating <= 5):
+            return Response(
+                {'status': 'error', 'message': 'La note doit être entre 1 et 5'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        mission.agent_rating = rating
+        mission.agent_comment = comment
         mission.save()
         
-        self._add_to_timeline(mission, MissionStatus.DISPUTED, _("LITIGE OUVERT : Argent bloqué."), request)
-        
-        return Response({"detail": _("Litige enregistré. L'admin va trancher.")})
+        return Response({
+            'status': 'success',
+            'message': 'Client noté avec succès',
+            'data': {
+                'agent_rating': mission.agent_rating,
+                'agent_comment': mission.agent_comment
+            }
+        })
 
-    def _finalize_mission(self, mission):
-        """ Fermeture et Paiement """
-        if mission.status == MissionStatus.COMPLETED:
+    @action(detail=True, methods=['post'])
+    def manual_remote_validation(self, request, pk=None):
+        """Validation manuelle distante par le client (sans QR Code)"""
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        
+        if mission.client != request.user:
             return Response(
-                {"detail": _("Mission déjà finalisée.")},
-                status=status.HTTP_409_CONFLICT,
+                {'status': 'error', 'message': 'Seul le client peut valider la mission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if mission.status not in ['IN_PROGRESS', 'ON_THE_WAY', 'ARRIVED']:
+            return Response(
+                {'status': 'error', 'message': 'La mission doit être en cours pour être validée'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Libérer les fonds de l'escrow vers l'agent
+            self._release_funds_from_escrow(mission)
+        except ValueError as e:
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        mission.status = 'COMPLETED'
+        mission.save()
+        self._log_event(mission, 'validated_remotely', request.user)
+        
+        return Response({
+            'status': 'success',
+            'message': 'Mission validée manuellement et fonds libérés'
+        })
+
+    @action(detail=False, methods=['get'])
+    def monthly_report(self, request):
+        """Génère un relevé mensuel d'activité pour l'agent connecté"""
+        if not request.user.is_agent:
+            return Response(
+                {'status': 'error', 'message': 'Réservé aux agents'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Récupérer le mois depuis les query params (format: YYYY-MM)
+        month_str = request.query_params.get('month')
+        if not month_str:
+            month_str = timezone.now().strftime('%Y-%m')
+        
+        try:
+            year, month = map(int, month_str.split('-'))
+            start_date = timezone.datetime(year, month, 1).replace(tzinfo=timezone.utc)
+            if month == 12:
+                end_date = timezone.datetime(year + 1, 1, 1).replace(tzinfo=timezone.utc)
+            else:
+                end_date = timezone.datetime(year, month + 1, 1).replace(tzinfo=timezone.utc)
+        except (ValueError, IndexError):
+            return Response(
+                {'status': 'error', 'message': 'Format de mois invalide (YYYY-MM)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Récupérer les missions de l'agent pour le mois
+        missions = Mission.objects.filter(
+            agent=request.user,
+            created_at__gte=start_date,
+            created_at__lt=end_date
+        ).order_by('-created_at')
+        
+        # Calculer les statistiques
+        total_missions = missions.count()
+        completed_missions = missions.filter(status='COMPLETED').count()
+        cancelled_missions = missions.filter(status='CANCELLED').count()
+        total_earnings = sum(m.price for m in missions.filter(status='COMPLETED'))
+        
+        # Créer le PDF
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="releve_{month_str}.pdf"'
+        
+        doc = SimpleDocTemplate(response, pagesize=letter)
+        elements = []
+        styles = getSampleStyleSheet()
+        
+        # Titre
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            textColor=colors.HexColor('#FFD400'),
+            spaceAfter=30
+        )
+        elements.append(Paragraph(f"Relevé d'Activité - {month_str}", title_style))
+        elements.append(Spacer(1, 0.2*inch))
+        
+        # Info agent
+        agent_info = f"Agent: {request.user.username} | Tel: {request.user.phone_number}"
+        elements.append(Paragraph(agent_info, styles['Normal']))
+        elements.append(Spacer(1, 0.3*inch))
+        
+        # Statistiques
+        stats_data = [
+            ['Statistique', 'Valeur'],
+            ['Total Missions', str(total_missions)],
+            ['Missions Complétées', str(completed_missions)],
+            ['Missions Annulées', str(cancelled_missions)],
+            ['Gains Totaux', f"{total_earnings:.2f} FCFA"]
+        ]
+        
+        stats_table = Table(stats_data, colWidths=[3*inch, 2*inch])
+        stats_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FFD400')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(stats_table)
+        elements.append(Spacer(1, 0.5*inch))
+        
+        # Détail des missions
+        elements.append(Paragraph("Détail des Missions", styles['Heading2']))
+        elements.append(Spacer(1, 0.2*inch))
+        
+        mission_data = [['Date', 'Titre', 'Statut', 'Montant']]
+        for mission in missions[:50]:  # Limiter à 50 missions
+            mission_data.append([
+                mission.created_at.strftime('%d/%m/%Y'),
+                mission.title[:30],
+                mission.status,
+                f"{mission.price:.2f} FCFA"
+            ])
+        
+        mission_table = Table(mission_data, colWidths=[1*inch, 2.5*inch, 1.5*inch, 1.5*inch])
+        mission_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FFD400')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+            ('FONTSIZE', (0, 1), (-1, -1), 9)
+        ]))
+        elements.append(mission_table)
+        
+        doc.build(elements)
+        return response
+
+
+class IsMissionParticipant(permissions.BasePermission):
+    """Permission pour vérifier si l'utilisateur participe à la mission"""
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        return obj.mission.client == user or obj.mission.agent == user
+
+
+class MissionProofViewSet(viewsets.ModelViewSet):
+    """ViewSet pour les preuves de mission"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_agent:
+            return MissionProof.objects.filter(mission__agent=user)
+        return MissionProof.objects.filter(mission__client=user)
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return MissionProofCreateSerializer
+        return MissionProofSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def bulk_create(self, request):
+        """Créer plusieurs preuves en une fois"""
+        serializer = MissionProofBulkCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            mission_id = serializer.validated_data['mission_id']
+            proofs_data = serializer.validated_data['proofs']
+
+            user = request.user
+            if not user.is_agent:
+                return Response(
+                    {'error': 'Seuls les agents peuvent ajouter des preuves'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            created_proofs = []
+            for proof_data in proofs_data:
+                proof_serializer = MissionProofCreateSerializer(
+                    data={
+                        'mission': mission_id,
+                        **proof_data
+                    },
+                    context={'request': request}
+                )
+                
+                if proof_serializer.is_valid():
+                    proof = proof_serializer.save(uploaded_by=user)
+                    created_proofs.append(proof)
+            
+            return Response({
+                'created_count': len(created_proofs),
+                'proofs': MissionProofSerializer(created_proofs, many=True, context={'request': request}).data
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def set_primary(self, request, pk=None):
+        """Définir une preuve comme principale"""
+        proof = self.get_object()
+        
+        # Retirer le statut principal des autres preuves de cette mission
+        MissionProof.objects.filter(mission=proof.mission, is_primary=True).update(is_primary=False)
+        
+        # Définir cette preuve comme principale
+        proof.is_primary = True
+        proof.save(update_fields=['is_primary'])
+        
+        return Response({
+            'message': 'Preuve définie comme principale',
+            'is_primary': True
+        })
+
+
+class MissionTimelineEventViewSet(viewsets.ModelViewSet):
+    """ViewSet pour les événements de timeline"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_agent:
+            return MissionTimelineEvent.objects.filter(mission__agent=user)
+        return MissionTimelineEvent.objects.filter(mission__client=user)
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return MissionTimelineEventCreateSerializer
+        return MissionTimelineEventSerializer
+    
+    def perform_create(self, serializer):
+        serializer.save(performed_by=self.request.user)
+    
+    @action(detail=False, methods=['get'])
+    def mission_timeline(self, request):
+        """Obtenir la timeline complète d'une mission"""
+        mission_id = request.query_params.get('mission_id')
+        if not mission_id:
+            return Response(
+                {'error': 'mission_id requis'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = request.user
+        try:
+            from apps.missions.models import Mission
+            mission = Mission.objects.get(id=mission_id)
+
+            if not (mission.client == user or mission.agent == user):
+                return Response(
+                    {'error': 'Permission refusée'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            events = MissionTimelineEvent.objects.filter(mission=mission).order_by('occurred_at')
+            serializer = MissionTimelineEventSerializer(events, many=True, context={'request': request})
+            
+            return Response(serializer.data)
+            
+        except Mission.DoesNotExist:
+            return Response(
+                {'error': 'Mission introuvable'},
+                status=status.HTTP_404_NOT_FOUND
             )
 
-        mission.status = MissionStatus.COMPLETED
-        mission.save()
 
-        # Libérer le séquestre si existant
-        if hasattr(mission, 'escrow') and mission.escrow:
-            from apps.core.choices import EscrowStatus
-            from django.utils import timezone
-            escrow = mission.escrow
-            if escrow.status != EscrowStatus.RELEASED:
-                escrow.status = EscrowStatus.RELEASED
-                escrow.released_at = timezone.now()
-                escrow.save()
+class AgentStatisticsViewSet(viewsets.ModelViewSet):
+    """ViewSet pour les statistiques d'agent"""
+    serializer_class = AgentStatisticsSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
-        self._add_to_timeline(mission, MissionStatus.COMPLETED, _("Mission validée. Fonds libérés."), self.request)
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_agent:
+            return AgentStatistics.objects.filter(agent=user)
+        return AgentStatistics.objects.none()
 
-        NotificationService.send_to_user(
-            user=mission.agent,
-            title=_("Argent reçu !"),
-            body=_("Le client a validé. Votre solde a été mis à jour.")
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        """Statistiques du dashboard agent"""
+        user = request.user
+        if not user.is_agent:
+            return Response({'error': 'Réservé aux agents'}, status=status.HTTP_403_FORBIDDEN)
+
+        today = timezone.now().date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+
+        # Optimisation: Query unique avec aggregations conditionnelles
+        from django.db.models import Case, When, IntegerField, DecimalField
+
+        missions_stats = Mission.objects.filter(agent=user).aggregate(
+            total_missions=Count('id'),
+            total_earnings=Sum(Case(
+                When(status='COMPLETED', then='price'),
+                default=0,
+                output_field=DecimalField()
+            )),
+            completed_count=Count(Case(
+                When(status='COMPLETED', then=1),
+                output_field=IntegerField()
+            )),
+            active_missions=Count(Case(
+                When(status__in=['ACCEPTED', 'ON_THE_WAY', 'IN_PROGRESS', 'ARRIVED'], then=1),
+                output_field=IntegerField()
+            )),
+            pending_missions=Count(Case(
+                When(status='PENDING', then=1),
+                output_field=IntegerField()
+            )),
+            today_missions=Count(Case(
+                When(updated_at__date=today, then=1),
+                output_field=IntegerField()
+            )),
+            today_earnings=Sum(Case(
+                When(status='COMPLETED', updated_at__date=today, then='price'),
+                default=0,
+                output_field=DecimalField()
+            )),
+            week_missions=Count(Case(
+                When(updated_at__date__gte=week_start, then=1),
+                output_field=IntegerField()
+            )),
+            week_earnings=Sum(Case(
+                When(status='COMPLETED', updated_at__date__gte=week_start, then='price'),
+                default=0,
+                output_field=DecimalField()
+            )),
+            month_missions=Count(Case(
+                When(updated_at__date__gte=month_start, then=1),
+                output_field=IntegerField()
+            )),
+            month_earnings=Sum(Case(
+                When(status='COMPLETED', updated_at__date__gte=month_start, then='price'),
+                default=0,
+                output_field=DecimalField()
+            )),
         )
-        return Response({"status": _("Succès."), "detail": _("Mission finalisée.")})
 
-    def _add_to_timeline(self, mission, status, message, request=None, location=None):
-        """ Utilitaire pour remplir la Timeline automatiquement """
-        MissionTimeline.objects.create(
-            mission=mission,
-            status=status,
-            message=message,
-            location=location,
-            created_by=request.user if request else None
+        total_missions = missions_stats['total_missions'] or 0
+        total_earnings = missions_stats['total_earnings'] or 0
+        completed_count = missions_stats['completed_count'] or 0
+        completion_rate = round(completed_count / total_missions * 100, 2) if total_missions > 0 else 0
+
+        stats, _ = AgentStatistics.objects.get_or_create(agent=user)
+
+        dashboard_data = {
+            'today_missions': missions_stats['today_missions'] or 0,
+            'today_earnings': missions_stats['today_earnings'] or 0,
+            'week_missions': missions_stats['week_missions'] or 0,
+            'week_earnings': missions_stats['week_earnings'] or 0,
+            'month_missions': missions_stats['month_missions'] or 0,
+            'month_earnings': missions_stats['month_earnings'] or 0,
+            'total_missions': total_missions,
+            'total_earnings': total_earnings,
+            'average_rating': float(stats.average_rating),
+            'completion_rate': completion_rate,
+            'active_missions': missions_stats['active_missions'] or 0,
+            'pending_missions': missions_stats['pending_missions'] or 0,
+            'level': 'NOVICE',
+            'current_streak': stats.current_streak,
+        }
+
+        serializer = AgentDashboardStatsSerializer(dashboard_data)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def update_stats(self, request):
+        """Mettre à jour les statistiques"""
+        user = request.user
+        if not user.is_agent:
+            return Response({'error': 'Réservé aux agents'}, status=status.HTTP_403_FORBIDDEN)
+
+        total_missions = Mission.objects.filter(agent=user).count()
+        completed_missions = Mission.objects.filter(agent=user, status='COMPLETED').count()
+        cancelled_missions = Mission.objects.filter(agent=user, status='CANCELLED').count()
+        total_earnings = Mission.objects.filter(
+            agent=user, status='COMPLETED'
+        ).aggregate(total=Sum('price'))['total'] or 0
+
+        stats, _ = AgentStatistics.objects.get_or_create(agent=user)
+        stats.total_missions = total_missions
+        stats.completed_missions = completed_missions
+        stats.cancelled_missions = cancelled_missions
+        stats.total_earnings = total_earnings
+        stats.save(update_fields=['total_missions', 'completed_missions', 'cancelled_missions', 'total_earnings'])
+
+        return Response({'message': 'Statistiques mises à jour', 'stats': AgentStatisticsSerializer(stats).data})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@csrf_exempt
+def parse_vocal_mission(request):
+    """
+    Endpoint pour parser un fichier audio vocal et extraire les informations de mission.
+    Pipeline: Audio -> Transcription (Whisper) -> Extraction JSON (Mistral AI) -> Réponse structurée
+    """
+    if 'audio' not in request.FILES:
+        return JsonResponse(
+            {'error': 'Fichier audio requis'},
+            status=status.HTTP_400_BAD_REQUEST
         )
+
+    audio_file = request.FILES['audio']
+
+    # Étape A: Transcription avec Whisper
+    try:
+        openai.api_key = os.environ.get('OPENAI_API_KEY')
+        
+        # Sauvegarder le fichier temporairement
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
+            for chunk in audio_file.chunks():
+                temp_file.write(chunk)
+            temp_path = temp_file.name
+
+        # Transcrire avec Whisper
+        with open(temp_path, 'rb') as audio:
+            transcription_response = openai.Audio.transcribe(
+                model="whisper-1",
+                file=audio,
+                language="fr"
+            )
+        
+        transcription = transcription_response['text']
+        
+        # Nettoyer le fichier temporaire
+        os.unlink(temp_path)
+
+    except Exception as e:
+        return JsonResponse(
+            {'error': f'Erreur transcription: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    # Étape B: Extraction JSON avec Mistral AI
+    try:
+        mistral_api_key = os.environ.get('MISTRAL_API_KEY')
+        if not mistral_api_key:
+            # Fallback: extraction basique sans IA
+            extracted_data = {
+                'title': 'Mission vocale',
+                'description': transcription,
+                'category_id': None,
+                'budget': None,
+                'scheduled_date': None,
+                'scheduled_time_slot': None,
+                'address': None,
+                'latitude': None,
+                'longitude': None,
+            }
+            missing_fields = [
+                {
+                    'field': 'scheduled_date',
+                    'question': 'Quand l\'artisan doit-il intervenir ?',
+                    'ui_type': 'quick_buttons',
+                    'options': [
+                        {'label': 'Urgent (Dès que possible) ⏱️', 'value': 'ASAP'},
+                        {'label': 'Aujourd\'hui 📅', 'value': 'TODAY'},
+                        {'label': 'Demain 🌅', 'value': 'TOMORROW'},
+                        {'label': 'Cette semaine 🗓️', 'value': 'THIS_WEEK'}
+                    ]
+                },
+                {
+                    'field': 'budget',
+                    'question': 'Quel budget proposez-vous pour ce travail ?',
+                    'ui_type': 'price_suggestions',
+                    'options': [
+                        {'label': 'Éco (5 000 FCFA)', 'value': 5000},
+                        {'label': 'Standard (10 000 FCFA)', 'value': 10000},
+                        {'label': 'Premium (18 000 FCFA)', 'value': 18000},
+                        {'label': 'À négocier 💬', 'value': 0}
+                    ]
+                }
+            ]
+        else:
+            # Utiliser Mistral AI pour extraction structurée
+            from openai import OpenAI
+            client = OpenAI(api_key=mistral_api_key, base_url="https://api.mistral.ai/v1")
+            
+            system_prompt = """Tu es un assistant IA spécialisé dans l'extraction d'informations de missions de service.
+À partir d'une transcription textuelle, extrais les informations suivantes au format JSON strict:
+{
+  "title": "Titre court de la mission",
+  "description": "Description détaillée",
+  "category": "Catégorie du service (plomberie, électricité, ménage, etc.)",
+  "budget": "Montant estimé en FCFA (null si non mentionné)",
+  "scheduled_date": "Date souhaitée (ASAP, TODAY, TOMORROW, THIS_WEEK, null si non mentionné)",
+  "scheduled_time_slot": "Créneau horaire (MORNING, AFTERNOON, EVENING, null si non mentionné)",
+  "address": "Adresse ou localisation (null si non mentionné)",
+  "is_urgent": "true si urgent, false sinon"
+}
+
+Retourne UNIQUEMENT le JSON, sans texte supplémentaire."""
+
+            response = client.chat.completions.create(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": transcription}
+                ],
+                response_format={"type": "json_object"}
+            )
+
+            extracted_json = json.loads(response.choices[0].message.content)
+            
+            # Mapper les champs extraits
+            extracted_data = {
+                'title': extracted_json.get('title'),
+                'description': extracted_json.get('description'),
+                'category_id': None,  # À mapper avec les catégories existantes
+                'budget': extracted_json.get('budget'),
+                'scheduled_date': extracted_json.get('scheduled_date'),
+                'scheduled_time_slot': extracted_json.get('scheduled_time_slot'),
+                'address': extracted_json.get('address'),
+                'latitude': None,
+                'longitude': None,
+            }
+
+            # Générer les champs manquants
+            missing_fields = []
+            
+            if not extracted_data.get('scheduled_date'):
+                missing_fields.append({
+                    'field': 'scheduled_date',
+                    'question': 'Quand l\'artisan doit-il intervenir ?',
+                    'ui_type': 'quick_buttons',
+                    'options': [
+                        {'label': 'Urgent (Dès que possible) ⏱️', 'value': 'ASAP'},
+                        {'label': 'Aujourd\'hui 📅', 'value': 'TODAY'},
+                        {'label': 'Demain 🌅', 'value': 'TOMORROW'},
+                        {'label': 'Cette semaine 🗓️', 'value': 'THIS_WEEK'}
+                    ]
+                })
+            
+            if not extracted_data.get('scheduled_time_slot'):
+                missing_fields.append({
+                    'field': 'scheduled_time_slot',
+                    'question': 'À quel moment préférez-vous ?',
+                    'ui_type': 'quick_buttons',
+                    'options': [
+                        {'label': 'Matin (8h-12h) ☀️', 'value': 'MORNING'},
+                        {'label': 'Après-midi (12h-17h) 🌤️', 'value': 'AFTERNOON'},
+                        {'label': 'Soir (17h-21h) 🌙', 'value': 'EVENING'}
+                    ]
+                })
+            
+            if not extracted_data.get('budget'):
+                missing_fields.append({
+                    'field': 'budget',
+                    'question': 'Quel budget proposez-vous pour ce travail ?',
+                    'ui_type': 'price_suggestions',
+                    'options': [
+                        {'label': 'Éco (5 000 FCFA)', 'value': 5000},
+                        {'label': 'Standard (10 000 FCFA)', 'value': 10000},
+                        {'label': 'Premium (18 000 FCFA)', 'value': 18000},
+                        {'label': 'À négocier 💬', 'value': 0}
+                    ]
+                })
+
+    except Exception as e:
+        return JsonResponse(
+            {'error': f'Erreur extraction IA: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    # Étape C: Construire la réponse
+    response_data = {
+        'status': 'incomplete' if missing_fields else 'complete',
+        'transcription': transcription,
+        'extracted_data': extracted_data,
+        'missing_fields': missing_fields
+    }
+
+    return JsonResponse(response_data, status=status.HTTP_200_OK)

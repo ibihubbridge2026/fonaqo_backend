@@ -157,6 +157,32 @@ docker run -p 1080:1080 -p 1025:1025 maildev/maildev
 # En développement
 flutter run --dart-define=SERVER_URL=http://localhost:8000
 
+---
+
+## 📱 Accès depuis un téléphone physique (WiFi LAN)
+
+### Prérequis
+- Le téléphone ET le PC doivent être sur le **même réseau WiFi**
+- Désactiver les **données mobiles** sur Android (Android bascule sur 4G si le WiFi est lent)
+- Désactiver le **"Basculement réseau intelligent"** : Paramètres → Connexions → WiFi → Avancé
+
+### Règles iptables pour autoriser Docker depuis le WiFi (à refaire après reboot)
+```bash
+# Autoriser le forwarding wlo1 → conteneur Docker
+sudo iptables -I DOCKER-USER -i wlo1 -o br-a89eab44e3fe -j ACCEPT
+sudo iptables -I DOCKER-USER 2 -i br-a89eab44e3fe -o wlo1 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+```
+
+### Vérifier la connectivité depuis le téléphone
+```
+Ouvrez dans le navigateur du téléphone : http://192.168.1.73:8000/api/v1/
+```
+
+### IP de la machine (à vérifier si la connexion change)
+```bash
+ip addr show wlo1 | grep "inet "
+```
+
 # En production  
 flutter run --dart-define=SERVER_URL=https://api.fonaqo.com
 

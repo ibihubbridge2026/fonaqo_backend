@@ -1,116 +1,126 @@
 import json
-import uuid
-
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
+from .models import Conversation, Message
 
-from .models import Message
-
+User = get_user_model()
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.mission_id = self.scope["url_route"]["kwargs"]["mission_id"]
-        self.room_group_name = f"chat_{self.mission_id}"
-        user = self.scope.get("user")
-
-        if not user or not user.is_authenticated:
-            await self.close(code=4001)
+        self.mission_id = self.scope['url_route']['kwargs']['mission_id']
+        self.conversation_group_name = f'chat_{self.mission_id}'
+        
+        # Vérifier si l'utilisateur est authentifié
+        if self.scope["user"].is_anonymous:
+            await self.close()
+            return
+        
+        # Résoudre la conversation depuis la mission
+        self.conversation = await self.get_or_create_conversation()
+        if self.conversation is None:
+            await self.close()
             return
 
-        try:
-            uuid.UUID(str(self.mission_id))
-        except (ValueError, TypeError, AttributeError):
-            await self.close(code=4400)
+        # Vérifier si l'utilisateur participe à la conversation
+        if not await self.is_participant():
+            await self.close()
             return
-
-        if not await self._mission_exists():
-            await self.close(code=4404)
-            return
-
-        # Vérification d'accès stricte (client/agent de la mission uniquement)
-        if not await self.is_member_of_mission(user):
-            await self.close(code=4003)
-            return
-
-        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
-        await self.accept()
-
-    @database_sync_to_async
-    def is_member_of_mission(self, user):
-        from apps.missions.models import Mission
-
-        try:
-            mission = Mission.objects.get(id=self.mission_id)
-            return user == mission.client or user == mission.agent
-        except (Mission.DoesNotExist, ValueError, ValidationError):
-            return False
-
-    @database_sync_to_async
-    def _mission_exists(self):
-        from apps.missions.models import Mission
-
-        try:
-            return Mission.objects.filter(id=self.mission_id).exists()
-        except (ValueError, ValidationError):
-            return False
-
-    async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(
-            self.room_group_name,
+        
+        # Rejoindre le groupe de conversation
+        await self.channel_layer.group_add(
+            self.conversation_group_name,
             self.channel_name
         )
-
+        
+        await self.accept()
+    
+    async def disconnect(self, close_code):
+        # Quitter le groupe de conversation
+        await self.channel_layer.group_discard(
+            self.conversation_group_name,
+            self.channel_name
+        )
+    
     async def receive(self, text_data):
-        data = json.loads(text_data)
-        event_type = data.get('type', 'message')  # On récupère le type d'événement
-        sender = self.scope['user']
-
-        if event_type == 'message':
-            content = data.get('message')
-            if not content:
-                return
-            # 1. Sauvegarder dans PostgreSQL
-            await self.save_message(sender, content)
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type', 'text')
+            content = data.get('content', '')
             
-            # 2. Diffuser le message à la "room"
+            # Créer et sauvegarder le message
+            message = await self.create_message(message_type, content)
+            
+            # Envoyer le message au groupe
             await self.channel_layer.group_send(
-                self.room_group_name,
+                self.conversation_group_name,
                 {
                     'type': 'chat_message',
-                    'message': content,
-                    'sender': sender.username,
+                    'message': {
+                        'id': str(message.id),
+                        'content': message.content,
+                        'message_type': message.message_type,
+                        'sender': message.sender.username if message.sender else 'Unknown',
+                        'sender_id': str(message.sender.id) if message.sender else None,
+                        'timestamp': message.created_at.isoformat(),
+                        'media_url': message.media_file.url if message.media_file else None,
+                        'audio_url': message.audio_file.url if message.audio_file else None,
+                        'audio_duration': message.audio_duration,
+                    }
                 }
             )
-
-        elif event_type == 'typing':
-            # On ne sauvegarde pas en base, on diffuse juste l'info en direct
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'user_typing',
-                    'sender': sender.username,
-                    'is_typing': data.get('is_typing', True)
-                }
-            )
-
+        except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON format'
+            }))
+        except Exception as e:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+    
     async def chat_message(self, event):
-        # Envoi effectif vers le WebSocket (Flutter)
-        await self.send(text_data=json.dumps({
-            'message': event['message'],
-            'sender': event['sender']
-        }))
-
-    async def user_typing(self, event):
-        """Transmet l'état 'en train d'écrire' à l'autre utilisateur"""
-        await self.send(text_data=json.dumps({
-            'type': 'typing',
-            'sender': event['sender'],
-            'is_typing': event['is_typing']
-        }))
+        message = event['message']
         
+        # Envoyer le message au WebSocket
+        await self.send(text_data=json.dumps({
+            'type': 'message',
+            'message': message
+        }))
+    
     @database_sync_to_async
-    def save_message(self, sender, content):
+    def get_or_create_conversation(self):
         from apps.missions.models import Mission
-        mission = Mission.objects.get(id=self.mission_id)
-        return Message.objects.create(mission=mission, sender=sender, content=content)
+        try:
+            mission = Mission.objects.get(pk=self.mission_id)
+            conversation, _ = Conversation.objects.get_or_create(
+                mission=mission,
+                defaults={
+                    'client': mission.client,
+                    'agent': mission.agent,
+                }
+            )
+            return conversation
+        except Mission.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def is_participant(self):
+        user = self.scope["user"]
+        conv = self.conversation
+        return conv.client == user or conv.agent == user
+    
+    @database_sync_to_async
+    def create_message(self, message_type, content):
+        try:
+            sender = self.scope["user"]
+            message = Message.objects.create(
+                conversation=self.conversation,
+                sender=sender,
+                content=content,
+                message_type=message_type
+            )
+            return message
+        except Exception:
+            return None

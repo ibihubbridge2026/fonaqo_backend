@@ -131,15 +131,12 @@ def forgot_password_view(request):
             'data': {}
         }, status=status.HTTP_400_BAD_REQUEST)
     
-    # Simulation - envoyer un email de réinitialisation
-    # TODO: Intégrer un vrai service d'envoi d'emails
+    # TODO: Intégrer un vrai service d'envoi d'emails (SendGrid, Mailjet...)
     return JsonResponse({
-        'status': 'success',
-        'message': 'Un email de réinitialisation a été envoyé',
-        'data': {
-            'email': email
-        }
-    }, status=status.HTTP_200_OK)
+        'status': 'error',
+        'message': 'La réinitialisation par email n\'est pas encore disponible. Contactez le support.',
+        'data': {}
+    }, status=status.HTTP_501_NOT_IMPLEMENTED)
 
 
 @api_view(['POST'])
@@ -217,7 +214,7 @@ def google_auth_view(request):
                 'access_token': access_token,
                 'refresh_token': refresh_token,
                 'user': user_data,
-                'is_new_user': not User.objects.filter(email=email).exclude(pk=user.pk).exists()
+                'is_new_user': status_code == status.HTTP_201_CREATED
             }
         }, status=status_code)
         
@@ -229,7 +226,7 @@ def google_auth_view(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['POST'])
+@api_view(['POST', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def update_phone_view(request):
     """Met à jour le numéro de téléphone de l'utilisateur"""
@@ -272,7 +269,7 @@ def update_phone_view(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['POST'])
+@api_view(['POST', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def agent_status_view(request):
     """Met à jour le statut en ligne/hors ligne de l'agent"""
@@ -364,39 +361,41 @@ def agent_suggestions_view(request):
     client_lng = request.GET.get('longitude')
     limit = int(request.GET.get('limit', 12))
     
-    # Base query pour les agents vérifiés
-    base_qs = User.objects.filter(is_agent=True, is_verified=True)
-    
-    # Si le client a des coordonnées, filtrer par proximité
+    RADIUS_KM = 5.0
+    DEG_PER_KM = 1.0 / 111.0
+
+    base_qs = User.objects.filter(is_agent=True)
+
     if client_lat and client_lng:
         try:
             client_lat = float(client_lat)
             client_lng = float(client_lng)
-            
-            # Filtrer les agents avec des coordonnées valides
+
+            delta = RADIUS_KM * DEG_PER_KM
             agents_with_location = base_qs.filter(
                 latitude__isnull=False,
-                longitude__isnull=False
+                longitude__isnull=False,
+                latitude__range=(client_lat - delta, client_lat + delta),
+                longitude__range=(client_lng - delta, client_lng + delta),
             )
-            
-            # Calculer la distance et trier (formule Haversine simplifiée)
+
             agents_with_distance = []
             for agent in agents_with_location:
-                # Distance approximative en km
-                distance = ((agent.latitude - client_lat) ** 2 + 
-                           (agent.longitude - client_lng) ** 2) ** 0.5 * 111  # ~111km par degré
-                agents_with_distance.append((agent, distance))
-            
-            # Trier par distance et prendre les plus proches
+                distance = ((agent.latitude - client_lat) ** 2 +
+                            (agent.longitude - client_lng) ** 2) ** 0.5 * 111
+                if distance <= RADIUS_KM:
+                    agents_with_distance.append((agent, distance))
+
             agents_with_distance.sort(key=lambda x: x[1])
-            qs = [agent for agent, distance in agents_with_distance[:limit]]
-            
+            qs = [agent for agent, _ in agents_with_distance[:limit]]
+
+            if not qs:
+                qs = list(base_qs.order_by('-date_joined')[:limit])
+
         except (ValueError, TypeError):
-            # En cas d'erreur, fallback sur la liste par défaut
-            qs = base_qs.order_by("-date_joined")[:limit]
+            qs = list(base_qs.order_by('-date_joined')[:limit])
     else:
-        # Pas de coordonnées, retourner les agents les plus récents
-        qs = base_qs.order_by("-date_joined")[:limit]
+        qs = list(base_qs.order_by('-date_joined')[:limit])
     
     # Fallback : si aucun agent vérifié, renvoyer les agents non vérifiés
     if not qs:
@@ -431,6 +430,8 @@ def agent_suggestions_view(request):
                 "last_name": u.last_name or "",
                 "specialty": specialty or "Agent terrain",
                 "is_verified": u.is_verified,
+                "is_online": u.is_online,
+                "is_available": u.is_online and u.is_agent,
                 "avatar_url": avatar_url,
                 "latitude": u.latitude,
                 "longitude": u.longitude,
@@ -450,6 +451,125 @@ def agent_suggestions_view(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def nearby_agents_view(request):
+    """
+    Agents à proximité avec filtres avancés.
+    Accepte: latitude, longitude, radius_km, min_rating, verified_only, mission_types, min_price, max_price, limit
+    """
+    try:
+        client_lat = request.GET.get('latitude')
+        client_lng = request.GET.get('longitude')
+        radius_km = float(request.GET.get('radius_km', 10))
+        min_rating = float(request.GET.get('min_rating', 0))
+        verified_only = request.GET.get('verified_only', 'true').lower() == 'true'
+        mission_types_str = request.GET.get('mission_types', '')
+        min_price = request.GET.get('min_price')
+        max_price = request.GET.get('max_price')
+        limit = int(request.GET.get('limit', 20))
+
+        if not client_lat or not client_lng:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Coordonnées GPS requises',
+                'data': []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        client_lat = float(client_lat)
+        client_lng = float(client_lng)
+
+        DEG_PER_KM = 1.0 / 111.0
+        delta = radius_km * DEG_PER_KM
+
+        base_qs = User.objects.filter(is_agent=True, latitude__isnull=False, longitude__isnull=False)
+
+        # Filtre par zone géographique
+        agents_in_range = base_qs.filter(
+            latitude__range=(client_lat - delta, client_lat + delta),
+            longitude__range=(client_lng - delta, client_lng + delta),
+        )
+
+        # Filtre par note minimale
+        if min_rating > 0:
+            agents_in_range = agents_in_range.filter(reliability_score__gte=min_rating)
+
+        # Filtre par vérification
+        if verified_only:
+            agents_in_range = agents_in_range.filter(is_verified=True)
+
+        # Filtre par types de mission
+        if mission_types_str:
+            mission_types = mission_types_str.split(',')
+            # Filtrer les agents qui offrent au moins un des types de mission demandés
+            agents_in_range = agents_in_range.filter(
+                offered_services__category__name__in=mission_types,
+                offered_services__is_active=True
+            ).distinct()
+
+        # Calculer les distances et filtrer
+        agents_with_distance = []
+        for agent in agents_in_range:
+            distance = ((agent.latitude - client_lat) ** 2 +
+                        (agent.longitude - client_lng) ** 2) ** 0.5 * 111
+            if distance <= radius_km:
+                agents_with_distance.append((agent, distance))
+
+        # Trier par distance
+        agents_with_distance.sort(key=lambda x: x[1])
+        qs = [agent for agent, _ in agents_with_distance[:limit]]
+
+        rows = []
+        for u in qs:
+            # Calculer la distance précise
+            distance_km = ((float(u.latitude) - client_lat) ** 2 + 
+                         (float(u.longitude) - client_lng) ** 2) ** 0.5 * 111
+            distance_km = round(distance_km, 1)
+
+            # Obtenir la spécialité
+            svc = u.offered_services.filter(is_active=True).first()
+            specialty = ""
+            if svc and svc.category:
+                specialty = svc.category.name
+            elif svc:
+                specialty = svc.title
+
+            avatar_url = u.profile_picture.url if u.profile_picture else None
+
+            rows.append({
+                "id": str(u.id),
+                "username": u.username,
+                "first_name": u.first_name or "",
+                "last_name": u.last_name or "",
+                "specialty": specialty or "Agent terrain",
+                "is_verified": u.is_verified,
+                "is_online": u.is_online,
+                "is_available": u.is_online and u.is_agent,
+                "avatar_url": avatar_url,
+                "latitude": u.latitude,
+                "longitude": u.longitude,
+                "address": u.address,
+                "city": u.city,
+                "distance_km": distance_km,
+                "reliability_score": u.reliability_score,
+                "completion_rate": u.completion_rate,
+            })
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Agents à proximité',
+            'data': rows
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error("Erreur nearby agents: %s", str(e))
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Erreur lors de la récupération des agents',
+            'data': []
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])

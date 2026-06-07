@@ -16,11 +16,13 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 
 import apps.chat.routing
 import apps.missions.routing
+import apps.notifications.routing
 from apps.chat.middleware import JwtWsAuthMiddleware
 
 _ws_patterns = (
     apps.chat.routing.websocket_urlpatterns
     + apps.missions.routing.websocket_urlpatterns
+    + apps.notifications.routing.websocket_urlpatterns
 )
 
 application = ProtocolTypeRouter({

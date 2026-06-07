@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-fonaqo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     networks:
       - fonaqo_network
     healthcheck:
@@ -35,6 +35,9 @@ services:
     command: sh -c "python manage.py migrate && python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgis://fonaqo:change-me@db:5432/fonaqo_db
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
     ports:
@@ -52,6 +55,9 @@ services:
     command: python -m celery -A config worker -l info
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgis://fonaqo:change-me@db:5432/fonaqo_db
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
     networks:
@@ -67,6 +73,9 @@ services:
     command: python -m celery -A config beat -l info
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgis://fonaqo:change-me@db:5432/fonaqo_db
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
     networks:

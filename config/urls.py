@@ -21,8 +21,6 @@ api_v1_patterns = [
     path('opportunities/', include('apps.opportunities.urls')),
     path('boosts/', include('apps.boosts.urls')),
     path('disputes/', include('apps.disputes.urls')),
-    path('chat-enhanced/', include('apps.chat_enhanced.urls')),
-    path('missions-enhanced/', include('apps.missions_enhanced.urls')),
     path('statistics/', include('apps.statistics.urls')),
 ]
 
