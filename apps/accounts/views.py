@@ -288,7 +288,7 @@ def agent_status_view(request):
         # Mettre à jour le statut (pour l'instant on utilise un champ temporaire)
         # TODO: Ajouter un champ is_online dans le modèle User quand nécessaire
         request.user.is_online = is_online
-        request.user.save()
+        request.user.save(update_fields=['is_online'])
         
         logger.info("Statut agent mis à jour: user=%s, is_online=%s", request.user.username, is_online)
         

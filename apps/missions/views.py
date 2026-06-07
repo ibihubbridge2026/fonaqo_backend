@@ -7,15 +7,14 @@ from django.db import transaction
 from datetime import datetime, timedelta
 from django.utils import timezone
 from django.http import HttpResponse, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import inch
-import openai
 import json
 import os
+import uuid
 from .models import Mission, MissionProof, MissionTimelineEvent, AgentStatistics
 from .serializers import (
     MissionProofSerializer, MissionProofCreateSerializer,
@@ -74,13 +73,14 @@ class MissionViewSet(viewsets.ViewSet):
 
     def _lock_funds_in_escrow(self, mission):
         """Bloque les fonds du client en escrow lors de l'acceptation/démarrage"""
-        client_wallet, _ = Wallet.objects.get_or_create(user=mission.client)
-        total_amount = mission.price + mission.service_fee
-
-        if client_wallet.balance < total_amount:
-            raise ValueError("Solde client insuffisant pour bloquer les fonds")
-
         with transaction.atomic():
+            client_wallet, _ = Wallet.objects.get_or_create(user=mission.client)
+            client_wallet = Wallet.objects.select_for_update().get(pk=client_wallet.pk)
+            total_amount = mission.price + mission.service_fee
+
+            if client_wallet.balance < total_amount:
+                raise ValueError("Solde client insuffisant pour bloquer les fonds")
+
             # Déduire du solde du client
             client_wallet.balance -= total_amount
             client_wallet.escrow_balance += total_amount
@@ -119,6 +119,9 @@ class MissionViewSet(viewsets.ViewSet):
             raise ValueError("Aucun escrow trouvé pour cette mission")
 
         with transaction.atomic():
+            client_wallet = Wallet.objects.select_for_update().get(pk=client_wallet.pk)
+            agent_wallet = Wallet.objects.select_for_update().get(pk=agent_wallet.pk)
+
             # Libérer du séquestre du client
             client_wallet.escrow_balance -= escrow.amount
             client_wallet.save()
@@ -201,9 +204,9 @@ class MissionViewSet(viewsets.ViewSet):
         if user.is_agent:
             qs = Mission.objects.filter(
                 status='PENDING', agent__isnull=True
-            ).select_related('client').order_by('-created_at')
+            ).select_related('client', 'agent').order_by('-created_at')
         else:
-            qs = Mission.objects.filter(client=user).select_related('agent').order_by('-created_at')
+            qs = Mission.objects.filter(client=user).select_related('client', 'agent').order_by('-created_at')
 
         # Apply pagination
         paginator = self.pagination_class()
@@ -288,13 +291,13 @@ class MissionViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        mission.agent = request.user
-        mission.status = 'ACCEPTED'
-        mission.save()
-
-        # Déblocage immédiat du montant des achats vers l'agent (hors séquestre)
         try:
-            self._release_purchase_to_agent(mission)
+            with transaction.atomic():
+                mission.agent = request.user
+                mission.status = 'ACCEPTED'
+                mission.save()
+                # Déblocage immédiat du montant des achats vers l'agent (hors séquestre)
+                self._release_purchase_to_agent(mission)
         except ValueError as e:
             return Response(
                 {'status': 'error', 'message': str(e)},
@@ -333,11 +336,16 @@ class MissionViewSet(viewsets.ViewSet):
         mission, err = self._get_mission(pk, request.user)
         if err:
             return err
-        new_status = request.data.get('status', mission.status)
-        if new_status in _STATUS_EVENT_MAP:
-            mission.status = new_status
-            mission.save()
-            self._log_event(mission, _STATUS_EVENT_MAP[new_status], request.user, request.data)
+        _AGENT_ALLOWED_STEPS = {'ON_THE_WAY', 'ARRIVED'}
+        new_status = request.data.get('status')
+        if not new_status or new_status not in _AGENT_ALLOWED_STEPS:
+            return Response(
+                {'status': 'error', 'message': f'Statut invalide. Valeurs acceptées : {", ".join(_AGENT_ALLOWED_STEPS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        mission.status = new_status
+        mission.save(update_fields=['status', 'updated_at'])
+        self._log_event(mission, _STATUS_EVENT_MAP[new_status], request.user, request.data)
         return Response(MissionDetailSerializer(mission).data)
 
     @action(detail=True, methods=['post'])
@@ -372,6 +380,8 @@ class MissionViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
+        mission.qr_code_token = uuid.uuid4().hex
+        mission.save(update_fields=['qr_code_token'])
         self._log_event(mission, 'validated', request.user)
         return Response({'status': 'success', 'message': 'Mission validée et fonds libérés'})
 
@@ -503,7 +513,7 @@ class MissionViewSet(viewsets.ViewSet):
         total_missions = missions.count()
         completed_missions = missions.filter(status='COMPLETED').count()
         cancelled_missions = missions.filter(status='CANCELLED').count()
-        total_earnings = sum(m.price for m in missions.filter(status='COMPLETED'))
+        total_earnings = missions.filter(status='COMPLETED').aggregate(total=Sum('price'))['total'] or 0
         
         # Créer le PDF
         response = HttpResponse(content_type='application/pdf')
@@ -840,11 +850,10 @@ class AgentStatisticsViewSet(viewsets.ModelViewSet):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
-@csrf_exempt
 def parse_vocal_mission(request):
     """
     Endpoint pour parser un fichier audio vocal et extraire les informations de mission.
-    Pipeline: Audio -> Transcription (Whisper) -> Extraction JSON (Mistral AI) -> Réponse structurée
+    Pipeline: Audio -> Transcription (SpeechRecognition/Google STT) -> Extraction JSON (Mistral AI)
     """
     if 'audio' not in request.FILES:
         return JsonResponse(
@@ -854,39 +863,59 @@ def parse_vocal_mission(request):
 
     audio_file = request.FILES['audio']
 
-    # Étape A: Transcription avec Whisper
+    # Étape A: Transcription avec SpeechRecognition (Google STT, sans clé OpenAI)
+    import tempfile
+    import speech_recognition as sr
+    from pydub import AudioSegment
+
+    temp_path = None
+    wav_path = None
     try:
-        openai.api_key = os.environ.get('OPENAI_API_KEY')
-        
-        # Sauvegarder le fichier temporairement
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
+        suffix = os.path.splitext(audio_file.name or '')[1] or '.m4a'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             for chunk in audio_file.chunks():
                 temp_file.write(chunk)
             temp_path = temp_file.name
 
-        # Transcrire avec Whisper
-        with open(temp_path, 'rb') as audio:
-            transcription_response = openai.Audio.transcribe(
-                model="whisper-1",
-                file=audio,
-                language="fr"
-            )
-        
-        transcription = transcription_response['text']
-        
-        # Nettoyer le fichier temporaire
-        os.unlink(temp_path)
+        # Convertir en WAV (pydub gère m4a, mp3, ogg, etc. via ffmpeg)
+        audio_segment = AudioSegment.from_file(temp_path)
+        wav_path = temp_path.rsplit('.', 1)[0] + '.wav'
+        audio_segment.export(wav_path, format='wav')
 
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            transcription = recognizer.recognize_google(audio_data, language='fr-FR')
+
+    except sr.UnknownValueError:
+        return JsonResponse(
+            {'error': 'Audio incompréhensible, veuillez parler plus clairement et réessayer'},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+    except sr.RequestError as e:
+        return JsonResponse(
+            {'error': f'Service de transcription indisponible: {str(e)}'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
     except Exception as e:
         return JsonResponse(
             {'error': f'Erreur transcription: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+    finally:
+        for p in [temp_path, wav_path]:
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
-    # Étape B: Extraction JSON avec Mistral AI
+    # Étape B: Extraction JSON avec Mistral AI (SDK officiel)
     try:
-        mistral_api_key = os.environ.get('MISTRAL_API_KEY')
+        from mistralai import Mistral
+        from django.conf import settings as django_settings
+        mistral_api_key = os.environ.get('MISTRAL_API_KEY') or getattr(django_settings, 'MISTRAL_API_KEY', None)
+
         if not mistral_api_key:
             # Fallback: extraction basique sans IA
             extracted_data = {
@@ -925,10 +954,9 @@ def parse_vocal_mission(request):
                 }
             ]
         else:
-            # Utiliser Mistral AI pour extraction structurée
-            from openai import OpenAI
-            client = OpenAI(api_key=mistral_api_key, base_url="https://api.mistral.ai/v1")
-            
+            # Utiliser Mistral AI via SDK officiel
+            mistral_client = Mistral(api_key=mistral_api_key)
+
             system_prompt = """Tu es un assistant IA spécialisé dans l'extraction d'informations de missions de service.
 À partir d'une transcription textuelle, extrais les informations suivantes au format JSON strict:
 {
@@ -944,13 +972,12 @@ def parse_vocal_mission(request):
 
 Retourne UNIQUEMENT le JSON, sans texte supplémentaire."""
 
-            response = client.chat.completions.create(
+            response = mistral_client.chat.complete(
                 model="mistral-large-latest",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": transcription}
                 ],
-                response_format={"type": "json_object"}
             )
 
             extracted_json = json.loads(response.choices[0].message.content)

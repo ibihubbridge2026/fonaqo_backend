@@ -75,8 +75,10 @@ djangorestframework-simplejwt
 drf-spectacular
 faker
 
-# AI Search & Opportunities dependencies
-openai>=1.0.0
+# AI & Audio dependencies
+mistralai>=1.0.0
+SpeechRecognition>=3.10.0
+pydub>=0.25.0
 numpy>=1.21.0
 scikit-learn>=1.0.0
 geopy>=2.2.0

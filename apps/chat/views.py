@@ -119,18 +119,21 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 # Marquer des messages spécifiques
                 messages_to_mark = conversation.messages.filter(id__in=message_ids, is_read=False)
             
-            # Marquer les messages comme lus
+            # Compter avant l'update (le queryset est consommé ensuite)
+            marked_count = messages_to_mark.count()
             messages_to_mark.update(is_read=True, read_at=timezone.now())
             
-            # Mettre à jour le last_read de la conversation
+            # Mettre à jour uniquement le champ last_read de l'utilisateur courant
+            now = timezone.now()
             if conversation.client == request.user:
-                conversation.client_last_read = timezone.now()
+                conversation.client_last_read = now
+                conversation.save(update_fields=['client_last_read'])
             else:
-                conversation.agent_last_read = timezone.now()
-            conversation.save(update_fields=['client_last_read', 'agent_last_read'])
+                conversation.agent_last_read = now
+                conversation.save(update_fields=['agent_last_read'])
             
             return Response({
-                'marked_count': messages_to_mark.count(),
+                'marked_count': marked_count,
                 'message': 'Messages marqués comme lus'
             })
         
