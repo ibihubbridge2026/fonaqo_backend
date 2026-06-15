@@ -8,4 +8,5 @@ router.register(r'my-boosts', views.AgentBoostViewSet, basename='agent-boosts')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('my-boosts/purchase/', views.AgentBoostViewSet.as_view({'post': 'purchase'}), name='boost-purchase'),
 ]

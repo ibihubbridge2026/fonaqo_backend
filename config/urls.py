@@ -7,6 +7,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 
 # Regroupement des routes API pour une meilleure lisibilité
 api_v1_patterns = [
+    path('public/', include('apps.accounts.public_urls')),
     path('accounts/', include('apps.accounts.urls')),
     path('missions/', include('apps.missions.urls')),
     path('wallets/', include('apps.wallets.urls')),
@@ -15,19 +16,23 @@ api_v1_patterns = [
     path('services/', include('apps.services.urls')),
     path('notifications/', include('apps.notifications.urls')),
     path('chat/', include('apps.chat.urls')),
-    
-    # NOUVELLES ROUTES
     path('ai/', include('apps.ai_search.urls')),
     path('opportunities/', include('apps.opportunities.urls')),
     path('boosts/', include('apps.boosts.urls')),
     path('disputes/', include('apps.disputes.urls')),
     path('statistics/', include('apps.statistics.urls')),
+    path('leboncoin/', include('apps.leboncoin.urls')),
+    path('staff/', include('apps.core.staff_urls')),
 ]
+
+# V2 : même surface que v1 pour l'instant ; breaking changes futurs isolés ici.
+api_v2_patterns = list(api_v1_patterns)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # Point d'entrée unique pour la V1
+    path('health/', include('apps.core.urls')),
     path('api/v1/', include(api_v1_patterns)),
+    path('api/v2/', include(api_v2_patterns)),
     
     # Documentation API
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

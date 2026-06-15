@@ -140,4 +140,4 @@ class AgentBoost(models.Model):
         return self.status == 'active' and timezone.now() < self.expires_at
 
     def __str__(self):
-        return f"Boost {self.plan.name if self.plan else 'Inconnu'} - Agent {self.agent.user.username if self.agent and self.agent.user else 'Inconnu'}"
+        return f"Boost {self.plan.name if self.plan else 'Inconnu'} - Agent {self.agent.username if self.agent else 'Inconnu'}"

@@ -50,6 +50,13 @@ class Dispute(models.Model):
     title = models.CharField(max_length=200, verbose_name="Titre du litige")
     description = models.TextField(verbose_name="Description détaillée")
 
+    evidence_file = models.FileField(
+        upload_to='disputes/evidence/%Y/%m/%d/',
+        null=True,
+        blank=True,
+        verbose_name="Preuve (image / document)",
+    )
+
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,

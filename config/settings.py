@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'channels', # Pour les WebSockets
+    'fcm_django',
 
     # Local Apps (nos modules — AppConfig explicites)
     'apps.core.apps.CoreConfig',
@@ -86,6 +87,7 @@ INSTALLED_APPS = [
     'apps.boosts.apps.BoostsConfig',
     'apps.disputes.apps.DisputesConfig',
     'apps.statistics.apps.StatisticsConfig',
+    'apps.leboncoin.apps.LeboncoinConfig',
 
     #celery
     'django_celery_results',
@@ -271,8 +273,8 @@ if os.path.exists(FIREBASE_KEY_PATH):
 MISTRAL_API_KEY = env("MISTRAL_API_KEY", default="")
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=30),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': True,

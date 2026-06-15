@@ -2,6 +2,8 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
+from django.utils import timezone
 from .models import Dispute, DisputeEvidence, DisputeComment
 from .serializers import (
     DisputeSerializer, DisputeCreateSerializer, DisputeResolveSerializer,
@@ -27,7 +29,9 @@ class DisputeViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_staff:
             return Dispute.objects.all()
-        return Dispute.objects.filter(opened_by=user)
+        return Dispute.objects.filter(
+            Q(opened_by=user) | Q(mission__client=user) | Q(mission__agent=user)
+        ).distinct()
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -39,6 +43,85 @@ class DisputeViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(opened_by=self.request.user)
     
+    @action(detail=True, methods=['post'])
+    def assign(self, request, pk=None):
+        """Assigner un litige à un membre du staff (préparation super admin)."""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission refusée'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        dispute = self.get_object()
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response(
+                {'error': 'user_id requis'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            staff_user = User.objects.get(pk=user_id, is_staff=True)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Membre staff introuvable'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        dispute.assigned_to = staff_user
+        if dispute.status == 'open':
+            dispute.status = 'under_review'
+        dispute.save(update_fields=['assigned_to', 'status', 'updated_at'])
+        return Response(
+            DisputeSerializer(dispute, context={'request': request}).data,
+        )
+
+    @action(detail=True, methods=['post'])
+    def escalate(self, request, pk=None):
+        """Escalader un litige (préparation super admin)."""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission refusée'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        dispute = self.get_object()
+        priority = request.data.get('priority', 'high')
+        if priority not in dict(Dispute.PRIORITY_CHOICES):
+            return Response(
+                {'error': 'Priorité invalide'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        dispute.status = 'escalated'
+        dispute.priority = priority
+        dispute.save(update_fields=['status', 'priority', 'updated_at'])
+        return Response(
+            DisputeSerializer(dispute, context={'request': request}).data,
+        )
+
+    @action(detail=False, methods=['get'])
+    def admin_queue(self, request):
+        """File d'attente litiges ouverts (staff / super admin)."""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission refusée'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        qs = Dispute.objects.filter(
+            status__in=['open', 'under_review', 'escalated'],
+        ).select_related('mission', 'opened_by', 'assigned_to').order_by('-priority', 'created_at')
+
+        priority = request.query_params.get('priority')
+        if priority:
+            qs = qs.filter(priority=priority)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response({'results': serializer.data, 'count': qs.count()})
+
     @action(detail=True, methods=['post'])
     def resolve(self, request, pk=None):
         """Résoudre un litige (admin uniquement)"""

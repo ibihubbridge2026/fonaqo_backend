@@ -63,7 +63,17 @@ class Mission(models.Model):
     requires_procuration = models.BooleanField(default=False, help_text="La mission nécessite une procuration")
     target_agent_username = models.CharField(max_length=150, null=True, blank=True, help_text="Username de l'agent cible si assignation manuelle")
     is_urgent = models.BooleanField(default=False, help_text="Mission urgente : agents notifiés en priorité (+500 FCFA)")
-    is_confidential = models.BooleanField(default=False, help_text="Mission confidentielle : visible uniquement par les agents internes (+500 FCFA)")
+    is_confidential = models.BooleanField(default=False, help_text="Agent interne Fonaqo : recruté et encadré par Fonaqo (+500 FCFA)")
+    is_vocal_description = models.BooleanField(
+        default=False,
+        help_text="La description de la mission est un enregistrement vocal joint",
+    )
+    description_audio = models.FileField(
+        upload_to='missions/voice/%Y/%m/%d/',
+        null=True,
+        blank=True,
+        verbose_name="Description vocale (audio)",
+    )
     purchase_released = models.BooleanField(default=False, help_text="Indique si le montant des achats a déjà été transféré à l'agent")
     
     # Preuves
@@ -109,32 +119,6 @@ class MissionTimeline(models.Model):
 
     def __str__(self):
         return f"Timeline {self.status} - {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
-
-# --- SYSTÈME DE LITIGES (Point 8) ---
-class Dispute(models.Model):
-    class DisputeStatus(models.TextChoices):
-        OPEN = 'OPEN', _('Ouvert')
-        IN_REVIEW = 'IN_REVIEW', _('En examen')
-        RESOLVED = 'RESOLVED', _('Résolu')
-        CLOSED = 'CLOSED', _('Fermé')
-
-    mission = models.OneToOneField(Mission, on_delete=models.CASCADE, related_name='dispute_record')
-    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    reason = models.TextField()
-    status = models.CharField(max_length=20, choices=DisputeStatus.choices, default=DisputeStatus.OPEN)
-    admin_decision = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Dispute {self.status} - {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
-
-class DisputeEvidence(models.Model):
-    dispute = models.ForeignKey(Dispute, on_delete=models.CASCADE, related_name='evidences')
-    file = models.FileField(upload_to='disputes/evidences/')
-    description = models.CharField(max_length=255)
-
-    def __str__(self):
-        return f"Evidence: {self.description[:30]}{'...' if len(self.description) > 30 else ''}"
 
 # --- MATCHING & RECOMMENDATION (Point 4) ---
 class MissionRecommendation(models.Model):
@@ -306,6 +290,74 @@ class MissionTimelineEvent(models.Model):
 
     def __str__(self):
         return f"{self.get_event_type_display()} - Mission {self.mission.id}"
+
+
+class VoiceMissionRequest(models.Model):
+    """
+    Historique des demandes de mission par voix.
+    Conserve audio, transcription, extraction IA et résultat pour audit/support.
+    """
+    STATUS_CHOICES = [
+        ('processing', 'En cours'),
+        ('complete', 'Complet'),
+        ('incomplete', 'Incomplet'),
+        ('duplicate', 'Doublon détecté'),
+        ('error', 'Erreur'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='voice_requests',
+    )
+    audio_file = models.FileField(
+        upload_to='voice_missions/%Y/%m/%d/',
+        null=True, blank=True,
+        help_text="Fichier audio original",
+    )
+    audio_hash = models.CharField(
+        max_length=64, db_index=True, blank=True, default='',
+        help_text="SHA-256 du fichier audio (anti-doublon upload)",
+    )
+    transcription = models.TextField(blank=True, default='')
+    transcription_hash = models.CharField(
+        max_length=64, db_index=True, blank=True, default='',
+        help_text="SHA-256 de la transcription normalisée (anti-doublon)",
+    )
+    extracted_data = models.JSONField(null=True, blank=True)
+    missing_fields = models.JSONField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
+    category_id_resolved = models.IntegerField(
+        null=True, blank=True,
+        help_text="ID services.Category résolu par find_best_category()",
+    )
+    category_name_resolved = models.CharField(max_length=100, blank=True, default='')
+    mission = models.ForeignKey(
+        'Mission',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='voice_requests',
+        help_text="Mission créée depuis cette demande vocale (si confirmée)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Demande Mission Vocale"
+        verbose_name_plural = "Demandes Mission Vocale"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'transcription_hash']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'audio_hash', 'transcription_hash'],
+                name='unique_voice_request_hash',
+                deferrable=models.Deferrable.DEFERRED,
+            )
+        ]
+
+    def __str__(self):
+        return f"VoiceReq {self.user.username} — {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class AgentStatistics(models.Model):

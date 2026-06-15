@@ -76,6 +76,7 @@ drf-spectacular
 faker
 
 # AI & Audio dependencies
+jsonschema>=4.23.0
 mistralai>=1.0.0
 SpeechRecognition>=3.10.0
 pydub>=0.25.0

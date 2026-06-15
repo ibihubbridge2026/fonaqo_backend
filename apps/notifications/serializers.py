@@ -32,7 +32,16 @@ class InAppNotificationSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = InAppNotification
-        fields = ('id', 'title', 'body', 'is_read', 'created_at', 'time_ago')
+        fields = (
+            'id',
+            'title',
+            'body',
+            'action',
+            'target_id',
+            'is_read',
+            'created_at',
+            'time_ago',
+        )
         read_only_fields = fields
     
     def get_time_ago(self, obj):

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Dispute, DisputeEvidence, DisputeComment
-from apps.missions.serializers import MissionSerializer
+from apps.missions.serializers import MissionDetailSerializer as MissionSerializer
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -52,12 +52,14 @@ class DisputeSerializer(serializers.ModelSerializer):
     comments = DisputeCommentSerializer(many=True, read_only=True)
     is_open = serializers.ReadOnlyField()
     days_open = serializers.ReadOnlyField()
+    evidence_file_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Dispute
         fields = [
             'id', 'mission', 'mission_id', 'opened_by', 'assigned_to',
-            'title', 'description', 'status', 'priority',
+            'title', 'description', 'evidence_file', 'evidence_file_url',
+            'status', 'priority',
             'resolution_notes', 'resolved_at', 'resolved_by',
             'refund_amount', 'penalty_amount',
             'evidences', 'comments', 'is_open', 'days_open',
@@ -68,6 +70,14 @@ class DisputeSerializer(serializers.ModelSerializer):
             'is_open', 'days_open', 'created_at', 'updated_at'
         ]
 
+    def get_evidence_file_url(self, obj):
+        if obj.evidence_file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.evidence_file.url)
+            return obj.evidence_file.url
+        return None
+
 
 class DisputeCreateSerializer(serializers.ModelSerializer):
     """Serializer pour créer un nouveau litige"""
@@ -75,7 +85,7 @@ class DisputeCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dispute
         fields = [
-            'mission', 'title', 'description', 'priority'
+            'mission', 'title', 'description', 'priority', 'evidence_file'
         ]
     
     def validate_mission(self, value):

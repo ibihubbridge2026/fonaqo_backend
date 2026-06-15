@@ -1,3 +1,8 @@
+import logging
+import smtplib
+
+logger = logging.getLogger(__name__)
+
 from django.db.models.signals import post_save
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
@@ -50,10 +55,10 @@ def send_welcome_email_task(user_id, user_email, username):
             fail_silently=False,
         )
         
-        print(f"Email de bienvenue envoyé à {user_email}")
+        logger.info(f"Email de bienvenue envoyé à {user_email}")
         
-    except Exception as e:
-        print(f"Erreur lors de l'envoi de l'email de bienvenue: {e}")
+    except (smtplib.SMTPException, ConnectionError, TimeoutError) as e:
+        logger.error(f"Erreur lors de l'envoi de l'email de bienvenue: {e}")
 
 @receiver(pre_save, sender=User)
 def notify_agent_verification(sender, instance, **kwargs):
@@ -92,8 +97,8 @@ def create_user_wallet_and_referral(sender, instance, created, **kwargs):
                 },
                 ignore_result=True,
             )
-        except Exception:
-            pass
+        except (ConnectionError, TimeoutError, celery.exceptions.CeleryError):
+            logger.warning("Impossible d'envoyer l'email de bienvenue (Celery indisponible)")
         
         # Si parrainé, on peut envoyer une notification au parrain
         if instance.referred_by:

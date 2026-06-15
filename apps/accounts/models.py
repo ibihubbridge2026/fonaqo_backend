@@ -4,7 +4,7 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
-from apps.core.choices import KYCStatus
+from apps.core.choices import AgentKYCStatus, KYCStatus
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -53,6 +53,11 @@ class User(AbstractUser):
     longitude = models.FloatField(_('longitude'), null=True, blank=True)
     address = models.CharField(_('adresse'), max_length=500, blank=True)
     city = models.CharField(_('ville'), max_length=100, blank=True)
+    service_domain = models.CharField(
+        _('domaine / compétences agent'),
+        max_length=255,
+        blank=True,
+    )
 
     USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = ['username', 'email']
@@ -82,3 +87,61 @@ class User(AbstractUser):
             return self.phone_number
         else:
             return f"User-{self.id}"
+
+
+class FavoriteAgent(models.Model):
+    """Agents favoris d'un client (sync multi-appareils)."""
+    client = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='favorite_agents',
+    )
+    agent = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='favorited_by_clients',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('client', 'agent')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.client_id} → {self.agent_id}"
+
+
+class AgentProfile(models.Model):
+    """Profil métier agent (KYC, documents)."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='agent_profile',
+    )
+    kyc_status = models.CharField(
+        max_length=20,
+        choices=AgentKYCStatus.choices,
+        default=AgentKYCStatus.PENDING,
+    )
+    id_card_photo = models.ImageField(
+        _('photo recto pièce d\'identité'),
+        upload_to='kyc/agent_ids/',
+        blank=True,
+        null=True,
+    )
+    selfie_photo = models.ImageField(
+        _('selfie avec pièce'),
+        upload_to='kyc/agent_selfies/',
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('profil agent')
+        verbose_name_plural = _('profils agents')
+
+    def __str__(self):
+        return f"AgentProfile({self.user_id}, kyc={self.kyc_status})"

@@ -152,7 +152,7 @@ class OpportunityViewSet(viewsets.ModelViewSet):
         # Assigner l'agent
         opportunity.assigned_agent = agent
         opportunity.status = 'completed'
-        opportunity.save()
+        opportunity.save(update_fields=['assigned_agent', 'status', 'updated_at'])
         
         # Accepter la candidature correspondante
         OpportunityApplication.objects.filter(
@@ -245,13 +245,13 @@ class OpportunityApplicationViewSet(viewsets.ModelViewSet):
         
         # Accepter la candidature
         application.status = 'accepted'
-        application.save()
+        application.save(update_fields=['status', 'updated_at'])
         
         # Assigner l'agent à l'opportunité
         opportunity = application.opportunity
         opportunity.assigned_agent = application.agent
         opportunity.status = 'completed'
-        opportunity.save()
+        opportunity.save(update_fields=['assigned_agent', 'status', 'updated_at'])
         
         # Refuser les autres candidatures
         OpportunityApplication.objects.filter(
@@ -273,7 +273,7 @@ class OpportunityApplicationViewSet(viewsets.ModelViewSet):
             )
         
         application.status = 'rejected'
-        application.save()
+        application.save(update_fields=['status', 'updated_at'])
         
         serializer = self.get_serializer(application)
         return Response(serializer.data)

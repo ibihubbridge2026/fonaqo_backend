@@ -14,6 +14,18 @@ class InAppNotification(models.Model):
     )
     title = models.CharField(max_length=255)
     body = models.TextField(blank=True, default='')
+    action = models.CharField(
+        max_length=32,
+        blank=True,
+        default='',
+        help_text="Type de navigation: mission, chat, wallet, generic",
+    )
+    target_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="ID cible (mission, conversation, etc.)",
+    )
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 

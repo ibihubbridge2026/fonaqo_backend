@@ -8,9 +8,16 @@ class MissionStatus(models.TextChoices):
     ON_THE_WAY = "ON_THE_WAY", _("En route")
     ARRIVED = "ARRIVED", _("Arrive sur place")
     IN_PROGRESS = "IN_PROGRESS", _("En cours")
+    IN_PROGRESS_REVIEW = "IN_PROGRESS_REVIEW", _("En attente validation client")
     COMPLETED = "COMPLETED", _("Terminee")
     CANCELLED = "CANCELLED", _("Annulee")
     DISPUTED = "DISPUTED", _("En litige")
+
+
+class AgentKYCStatus(models.TextChoices):
+    PENDING = "PENDING", _("En attente")
+    APPROVED = "APPROVED", _("Approuve")
+    REJECTED = "REJECTED", _("Rejete")
 
 
 class TransactionStatus(models.TextChoices):

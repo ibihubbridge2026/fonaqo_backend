@@ -1,16 +1,157 @@
 import logging
 
+from django.contrib.auth import get_user_model
+from django.db.models import Q
+from django.http import JsonResponse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import get_user_model
-from django.http import JsonResponse
-from .serializers import LoginSerializer, UserSerializer, RegisterSerializer, ProfileUpdateSerializer
+
+from apps.core.choices import MissionStatus
+from apps.missions.models import Mission
+
+from .models import FavoriteAgent, AgentProfile
+from .serializers import LoginSerializer, ProfileUpdateSerializer, RegisterSerializer, UserSerializer
+from apps.core.choices import AgentKYCStatus
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def _agent_specialty(user):
+    svc = user.offered_services.filter(is_active=True).first()
+    if svc and svc.category:
+        return svc.category.name
+    if svc:
+        return svc.title
+    return "Agent terrain"
+
+
+def _agent_avatar_url(user, request):
+    if not user.profile_picture:
+        return ""
+    url = user.profile_picture.url
+    if request is not None:
+        return request.build_absolute_uri(url)
+    return url
+
+
+def _agent_rating(user):
+    score = user.reliability_score or 0
+    if score <= 0:
+        return 0.0
+    if score <= 5:
+        return round(float(score), 1)
+    return round(min(5.0, float(score) / 20.0), 1)
+
+
+def _agent_to_artisan_dict(user, request=None):
+    completed = Mission.objects.filter(
+        agent=user,
+        status=MissionStatus.COMPLETED,
+    ).count()
+    joined = user.date_joined
+    years = max(0, timezone.now().year - joined.year) if joined else 0
+
+    return {
+        "id": str(user.id),
+        "first_name": user.first_name or "",
+        "last_name": user.last_name or "",
+        "avatar_url": _agent_avatar_url(user, request),
+        "specialty": _agent_specialty(user),
+        "biography": "",
+        "years_of_experience": years,
+        "city": user.city or "",
+        "district": user.address or "",
+        "phone": user.phone_number or "",
+        "email": user.email or "",
+        "rating": _agent_rating(user),
+        "completed_missions": completed,
+        "certified": user.is_verified,
+        "premium": bool(user.level_id),
+        "gallery": [],
+    }
+
+
+def _verified_agents_queryset():
+    return User.objects.filter(is_agent=True, is_verified=True)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_artisans_list_view(request):
+    """
+    Annuaire public des artisans (agents vérifiés).
+    Filtres optionnels: query, specialty, location.
+    """
+    qs = _verified_agents_queryset()
+
+    query = (request.GET.get('query') or '').strip()
+    specialty = (request.GET.get('specialty') or '').strip()
+    location = (request.GET.get('location') or '').strip()
+
+    if specialty:
+        qs = qs.filter(
+            Q(offered_services__category__name__icontains=specialty)
+            | Q(offered_services__title__icontains=specialty),
+            offered_services__is_active=True,
+        ).distinct()
+
+    if location:
+        qs = qs.filter(
+            Q(city__icontains=location) | Q(address__icontains=location)
+        )
+
+    if query:
+        qs = qs.filter(
+            Q(first_name__icontains=query)
+            | Q(last_name__icontains=query)
+            | Q(username__icontains=query)
+            | Q(city__icontains=query)
+            | Q(address__icontains=query)
+            | Q(offered_services__category__name__icontains=query)
+            | Q(offered_services__title__icontains=query)
+        ).distinct()
+
+    rows = [_agent_to_artisan_dict(user, request) for user in qs.order_by('-reliability_score', '-date_joined')]
+
+    return JsonResponse(
+        {
+            "status": "success",
+            "message": "Artisans publics",
+            "data": rows,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_artisan_detail_view(request, artisan_id):
+    """Détail public d'un artisan (agent vérifié) par identifiant."""
+    user = _verified_agents_queryset().filter(pk=artisan_id).first()
+    if user is None:
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": "Artisan introuvable",
+                "data": {},
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return JsonResponse(
+        {
+            "status": "success",
+            "message": "Artisan public",
+            "data": _agent_to_artisan_dict(user, request),
+        },
+        status=status.HTTP_200_OK,
+    )
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -107,11 +248,28 @@ def register_view(request):
             }
         }, status=status.HTTP_201_CREATED)
     
-    return JsonResponse({
-        'status': 'error',
-        'message': 'Erreur lors de l\'inscription',
-        'data': serializer.errors
-    }, status=status.HTTP_400_BAD_REQUEST)
+    errors = serializer.errors
+    username_errors = errors.get('username')
+    if username_errors:
+        first_msg = (
+            username_errors[0]
+            if isinstance(username_errors, list)
+            else str(username_errors)
+        )
+        if 'déjà utilisé' in first_msg:
+            return JsonResponse(
+                {'message': 'Ce nom d\'utilisateur est déjà utilisé.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    return JsonResponse(
+        {
+            'status': 'error',
+            'message': 'Erreur lors de l\'inscription',
+            'data': errors,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 @api_view(['POST'])
@@ -194,7 +352,7 @@ def google_auth_view(request):
             # Par défaut, les utilisateurs Google sont des clients
             user.is_client = True
             user.is_agent = False
-            user.save()
+            user.save(update_fields=['is_client', 'is_agent', 'updated_at'])
             
             message = 'Compte créé avec succès via Google'
             status_code = status.HTTP_201_CREATED
@@ -250,14 +408,18 @@ def update_phone_view(request):
             
         # Mettre à jour le numéro
         request.user.phone_number = new_phone
-        request.user.save()
+        request.user.save(update_fields=['phone_number', 'updated_at'])
         
         logger.info("Numéro de téléphone mis à jour pour user=%s", request.user.username)
         
+        user_data = UserSerializer(request.user).data
         return JsonResponse({
             'status': 'success',
             'message': 'Numéro de téléphone mis à jour avec succès',
-            'data': {'phone_number': new_phone}
+            'data': {
+                'phone_number': new_phone,
+                'user': user_data,
+            },
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
@@ -422,6 +584,12 @@ def agent_suggestions_view(request):
             except (ValueError, TypeError):
                 pass
         
+        expertise_tags = list(
+            u.offered_services.filter(is_active=True)
+            .values_list("category__name", flat=True)
+            .distinct()[:5]
+        )
+
         rows.append(
             {
                 "id": str(u.id),
@@ -429,6 +597,7 @@ def agent_suggestions_view(request):
                 "first_name": u.first_name or "",
                 "last_name": u.last_name or "",
                 "specialty": specialty or "Agent terrain",
+                "expertise_tags": expertise_tags,
                 "is_verified": u.is_verified,
                 "is_online": u.is_online,
                 "is_available": u.is_online and u.is_agent,
@@ -471,62 +640,61 @@ def nearby_agents_view(request):
         max_price = request.GET.get('max_price')
         limit = int(request.GET.get('limit', 20))
 
-        if not client_lat or not client_lng:
-            return JsonResponse({
-                'status': 'error',
-                'message': 'Coordonnées GPS requises',
-                'data': []
-            }, status=status.HTTP_400_BAD_REQUEST)
+        use_gps = bool(client_lat and client_lng)
 
-        client_lat = float(client_lat)
-        client_lng = float(client_lng)
+        base_qs = User.objects.filter(is_agent=True)
 
-        DEG_PER_KM = 1.0 / 111.0
-        delta = radius_km * DEG_PER_KM
-
-        base_qs = User.objects.filter(is_agent=True, latitude__isnull=False, longitude__isnull=False)
-
-        # Filtre par zone géographique
-        agents_in_range = base_qs.filter(
-            latitude__range=(client_lat - delta, client_lat + delta),
-            longitude__range=(client_lng - delta, client_lng + delta),
-        )
-
+        if use_gps:
+            client_lat = float(client_lat)
+            client_lng = float(client_lng)
+            DEG_PER_KM = 1.0 / 111.0
+            delta = radius_km * DEG_PER_KM
+            base_qs = base_qs.filter(
+                latitude__isnull=False,
+                longitude__isnull=False,
+                latitude__range=(client_lat - delta, client_lat + delta),
+                longitude__range=(client_lng - delta, client_lng + delta),
+            )
+        
         # Filtre par note minimale
         if min_rating > 0:
-            agents_in_range = agents_in_range.filter(reliability_score__gte=min_rating)
+            base_qs = base_qs.filter(reliability_score__gte=min_rating)
 
         # Filtre par vérification
         if verified_only:
-            agents_in_range = agents_in_range.filter(is_verified=True)
+            base_qs = base_qs.filter(is_verified=True)
 
         # Filtre par types de mission
         if mission_types_str:
             mission_types = mission_types_str.split(',')
-            # Filtrer les agents qui offrent au moins un des types de mission demandés
-            agents_in_range = agents_in_range.filter(
+            base_qs = base_qs.filter(
                 offered_services__category__name__in=mission_types,
                 offered_services__is_active=True
             ).distinct()
 
-        # Calculer les distances et filtrer
-        agents_with_distance = []
-        for agent in agents_in_range:
-            distance = ((agent.latitude - client_lat) ** 2 +
-                        (agent.longitude - client_lng) ** 2) ** 0.5 * 111
-            if distance <= radius_km:
-                agents_with_distance.append((agent, distance))
-
-        # Trier par distance
-        agents_with_distance.sort(key=lambda x: x[1])
-        qs = [agent for agent, _ in agents_with_distance[:limit]]
+        if use_gps:
+            # Calculer les distances et filtrer
+            agents_with_distance = []
+            for agent in base_qs:
+                if agent.latitude is None or agent.longitude is None:
+                    continue
+                distance = ((float(agent.latitude) - client_lat) ** 2 +
+                            (float(agent.longitude) - client_lng) ** 2) ** 0.5 * 111
+                if distance <= radius_km:
+                    agents_with_distance.append((agent, distance))
+            agents_with_distance.sort(key=lambda x: x[1])
+            qs = [agent for agent, _ in agents_with_distance[:limit]]
+        else:
+            # Sans GPS : retourner tous les agents actifs triés par fiabilité
+            qs = list(base_qs.order_by('-reliability_score', '-is_online')[:limit])
 
         rows = []
         for u in qs:
-            # Calculer la distance précise
-            distance_km = ((float(u.latitude) - client_lat) ** 2 + 
-                         (float(u.longitude) - client_lng) ** 2) ** 0.5 * 111
-            distance_km = round(distance_km, 1)
+            if use_gps and u.latitude is not None and u.longitude is not None:
+                distance_km = round(((float(u.latitude) - client_lat) ** 2 +
+                             (float(u.longitude) - client_lng) ** 2) ** 0.5 * 111, 1)
+            else:
+                distance_km = None
 
             # Obtenir la spécialité
             svc = u.offered_services.filter(is_active=True).first()
@@ -537,6 +705,11 @@ def nearby_agents_view(request):
                 specialty = svc.title
 
             avatar_url = u.profile_picture.url if u.profile_picture else None
+            expertise_tags = list(
+                u.offered_services.filter(is_active=True)
+                .values_list("category__name", flat=True)
+                .distinct()[:5]
+            )
 
             rows.append({
                 "id": str(u.id),
@@ -544,6 +717,7 @@ def nearby_agents_view(request):
                 "first_name": u.first_name or "",
                 "last_name": u.last_name or "",
                 "specialty": specialty or "Agent terrain",
+                "expertise_tags": expertise_tags,
                 "is_verified": u.is_verified,
                 "is_online": u.is_online,
                 "is_available": u.is_online and u.is_agent,
@@ -572,6 +746,68 @@ def nearby_agents_view(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def favorites_list_view(request):
+    """Liste des IDs d'agents favoris du client connecté."""
+    if not request.user.is_client:
+        return JsonResponse(
+            {'status': 'error', 'message': 'Réservé aux clients', 'data': []},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    agent_ids = [
+        str(agent_id)
+        for agent_id in FavoriteAgent.objects.filter(client=request.user)
+        .values_list('agent_id', flat=True)
+    ]
+    return JsonResponse(
+        {'status': 'success', 'message': 'Favoris', 'data': agent_ids},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def favorites_detail_view(request, agent_id):
+    """Ajoute (POST) ou retire (DELETE) un agent des favoris."""
+    if not request.user.is_client:
+        return JsonResponse(
+            {'status': 'error', 'message': 'Réservé aux clients', 'data': {}},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == 'POST':
+        agent = User.objects.filter(pk=agent_id, is_agent=True).first()
+        if agent is None:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Agent introuvable', 'data': {}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        FavoriteAgent.objects.get_or_create(client=request.user, agent=agent)
+        return JsonResponse(
+            {
+                'status': 'success',
+                'message': 'Agent ajouté aux favoris',
+                'data': {'agent_id': str(agent.id)},
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    deleted, _ = FavoriteAgent.objects.filter(
+        client=request.user,
+        agent_id=agent_id,
+    ).delete()
+    if not deleted:
+        return JsonResponse(
+            {'status': 'error', 'message': 'Favori introuvable', 'data': {}},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return JsonResponse(
+        {'status': 'success', 'message': 'Agent retiré des favoris', 'data': {}},
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def change_password_view(request):
@@ -581,25 +817,43 @@ def change_password_view(request):
     try:
         old_password = request.data.get('old_password')
         new_password = request.data.get('new_password')
-        
-        if not old_password or not new_password:
-            return JsonResponse({
-                'status': 'error',
-                'message': 'Ancien et nouveau mot de passe requis',
-                'data': {}
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Vérifier l'ancien mot de passe
+        confirm_password = request.data.get('confirm_password')
+
+        if not old_password or not new_password or not confirm_password:
+            return JsonResponse(
+                {
+                    'message': (
+                        'Ancien mot de passe, nouveau mot de passe '
+                        'et confirmation sont requis.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_password != confirm_password:
+            return JsonResponse(
+                {'message': 'Les nouveaux mots de passe ne correspondent pas.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(str(new_password)) < 8:
+            return JsonResponse(
+                {
+                    'message': (
+                        'Le mot de passe doit contenir au moins 8 caractères.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not request.user.check_password(old_password):
-            return JsonResponse({
-                'status': 'error', 
-                'message': 'Ancien mot de passe incorrect',
-                'data': {}
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Changer le mot de passe
+            return JsonResponse(
+                {'message': 'Ancien mot de passe incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         request.user.set_password(new_password)
-        request.user.save()
+        request.user.save(update_fields=['password', 'updated_at'])
         
         logger.info("Mot de passe changé pour user=%s", request.user.username)
         
@@ -616,3 +870,35 @@ def change_password_view(request):
             'message': 'Erreur lors du changement de mot de passe',
             'data': {}
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def kyc_submit_view(request):
+    """Soumission KYC agent (pièce d'identité + selfie)."""
+    user = request.user
+    if not user.is_agent:
+        return JsonResponse(
+            {'message': 'Réservé aux agents.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    id_card = request.FILES.get('id_card_photo')
+    selfie = request.FILES.get('selfie_photo')
+    if not id_card or not selfie:
+        return JsonResponse(
+            {'message': 'Les fichiers id_card_photo et selfie_photo sont obligatoires.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    profile, _ = AgentProfile.objects.get_or_create(user=user)
+    profile.id_card_photo = id_card
+    profile.selfie_photo = selfie
+    profile.kyc_status = AgentKYCStatus.PENDING
+    profile.save()
+
+    return JsonResponse({
+        'status': 'success',
+        'message': 'Documents KYC soumis. Validation en cours.',
+        'data': {'kyc_status': profile.kyc_status},
+    }, status=status.HTTP_200_OK)

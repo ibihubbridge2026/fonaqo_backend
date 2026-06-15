@@ -4,14 +4,25 @@ import uuid
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from .models import AgentProfile
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class AgentProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentProfile
+        fields = ('kyc_status', 'id_card_photo', 'selfie_photo', 'updated_at')
+        read_only_fields = fields
 
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     wallet_balance = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
+    agent_profile = serializers.SerializerMethodField()
+    kyc_status = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -22,12 +33,17 @@ class UserSerializer(serializers.ModelSerializer):
             "username",
             "first_name",
             "last_name",
+            "city",
+            "address",
+            "service_domain",
             "is_agent",
             "is_client",
             "is_verified",
             "role",
             "wallet_balance",
             "avatar_url",
+            "agent_profile",
+            "kyc_status",
             "date_joined",
         )
 
@@ -46,6 +62,18 @@ class UserSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.profile_picture.url)
             return obj.profile_picture.url
         return None
+
+    def get_agent_profile(self, obj):
+        if not obj.is_agent:
+            return None
+        profile, _ = AgentProfile.objects.get_or_create(user=obj)
+        return AgentProfileSerializer(profile, context=self.context).data
+
+    def get_kyc_status(self, obj):
+        if not obj.is_agent:
+            return None
+        profile, _ = AgentProfile.objects.get_or_create(user=obj)
+        return profile.kyc_status
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -70,12 +98,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         }
     )
     username = serializers.CharField(
-        required=False,
-        allow_blank=True,
+        required=True,
+        allow_blank=False,
         error_messages={
-            'required': 'Ce champ est obligatoire.',
-            'blank': 'Ce champ ne peut pas être vide.'
-        }
+            'required': 'Le nom d\'utilisateur est obligatoire.',
+            'blank': 'Le nom d\'utilisateur ne peut pas être vide.',
+        },
     )
     first_name = serializers.CharField(
         required=False,
@@ -116,6 +144,18 @@ class RegisterSerializer(serializers.ModelSerializer):
             'required': 'Ce champ est obligatoire.',
         }
 
+    def validate_username(self, value):
+        username = (value or '').strip()
+        if not username:
+            raise serializers.ValidationError(
+                'Le nom d\'utilisateur est obligatoire.'
+            )
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError(
+                'Ce nom d\'utilisateur est déjà utilisé.'
+            )
+        return username
+
     def validate_phone_number(self, value):
         if User.objects.filter(phone_number=value).exists():
             raise serializers.ValidationError(
@@ -154,21 +194,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             while User.objects.filter(email=email).exists():
                 email = f"fonaqo_{safe_phone}_{uuid.uuid4().hex[:6]}@internal.fonaqo.local"
 
-        # Auto-génération du username si absent
         username = (validated_data.pop("username", None) or "").strip()
-        if not username:
-            username = first_name.lower() or f"user_{safe_phone[-6:] or uuid.uuid4().hex[:6]}"
-            base = username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{base}{counter}"
-                counter += 1
-        elif User.objects.filter(username=username).exists():
-            base = username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{base}{counter}"
-                counter += 1
 
         user = User.objects.create_user(
             phone_number=validated_data["phone_number"],
@@ -185,6 +211,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.is_client = True
             user.is_agent = False
         user.save()
+        if role == "agent":
+            AgentProfile.objects.get_or_create(user=user)
         logger.info("Inscription réussie user=%s role=%s", user.id, role)
         return user
 
@@ -268,6 +296,9 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "email",
             "phone_number",
             "profile_picture",
+            "city",
+            "address",
+            "service_domain",
             "id_card_front",
             "id_card_back",
             "selfie_with_id",

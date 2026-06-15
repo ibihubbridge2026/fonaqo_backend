@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Conversation, Message, TypingStatus
+from .models import Conversation, Message, TypingStatus, ChatAttachment, UserPresence
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -15,25 +15,51 @@ class TypingStatusSerializer(serializers.ModelSerializer):
         read_only_fields = ['user', 'updated_at']
 
 
+class ChatAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatAttachment
+        fields = ['id', 'attachment_type', 'file', 'file_url',
+                  'original_filename', 'file_size', 'mime_type', 'created_at']
+        read_only_fields = ['created_at']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.file.url)
+        return obj.file.url
+
+
+class UserPresenceSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = UserPresence
+        fields = ['username', 'is_online', 'last_seen']
+
+
 class MessageSerializer(serializers.ModelSerializer):
     """Serializer pour les messages"""
     sender = serializers.StringRelatedField(read_only=True)
     sender_id = serializers.IntegerField(read_only=True)
     media_file_url = serializers.SerializerMethodField()
     audio_file_url = serializers.SerializerMethodField()
-    
+    attachments = ChatAttachmentSerializer(many=True, read_only=True)
+
     class Meta:
         model = Message
         fields = [
-            'id', 'conversation', 'sender', 'sender_id',
-            'message_type', 'content', 'media_file', 'media_file_url',
+            'id', 'client_message_id', 'conversation', 'sender', 'sender_id',
+            'message_type', 'content', 'proposed_price', 'negotiation_status',
+            'media_file', 'media_file_url',
             'audio_file', 'audio_file_url', 'audio_duration',
-            'is_read', 'read_at', 'delivered_at',
-            'created_at', 'edited_at', 'is_deleted'
+            'delivery_status', 'is_read', 'read_at', 'delivered_at',
+            'created_at', 'edited_at', 'is_deleted', 'attachments',
         ]
         read_only_fields = [
-            'sender', 'is_read', 'read_at', 'delivered_at',
-            'created_at', 'edited_at'
+            'sender', 'delivery_status', 'is_read', 'read_at', 'delivered_at',
+            'created_at', 'edited_at',
         ]
     
     def get_media_file_url(self, obj):
@@ -54,13 +80,18 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class MessageCreateSerializer(serializers.ModelSerializer):
-    """Serializer pour créer un message"""
-    
+    """Serializer pour créer un message (REST fallback — WebSocket est préféré)"""
+    client_message_id = serializers.UUIDField(required=False, allow_null=True)
+    proposed_price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True,
+    )
+
     class Meta:
         model = Message
         fields = [
-            'conversation', 'message_type', 'content',
-            'media_file', 'audio_file', 'audio_duration'
+            'conversation', 'client_message_id', 'message_type', 'content',
+            'proposed_price', 'negotiation_status',
+            'media_file', 'audio_file', 'audio_duration',
         ]
     
     def validate_conversation(self, value):
@@ -88,14 +119,30 @@ class MessageCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Un fichier audio est requis pour les messages vocaux"
             )
-        
+
+        if message_type == 'negotiation':
+            user = self.context['request'].user
+            conversation = data.get('conversation') or self.context.get('conversation')
+            if conversation and conversation.agent != user:
+                raise serializers.ValidationError(
+                    "Seul l'agent peut proposer un nouveau tarif"
+                )
+            proposed = data.get('proposed_price')
+            if proposed is None or proposed <= 0:
+                raise serializers.ValidationError(
+                    {'proposed_price': 'Un montant proposé valide est requis'}
+                )
+            data['negotiation_status'] = Message.NegotiationStatus.PENDING
+            if not data.get('content'):
+                data['content'] = f'Proposition tarif : {proposed} FCFA'
+
         return data
 
 
 class ConversationSerializer(serializers.ModelSerializer):
     """Serializer pour les conversations"""
-    client = serializers.StringRelatedField(read_only=True)
-    agent = serializers.StringRelatedField(read_only=True)
+    client = serializers.SerializerMethodField()
+    agent = serializers.SerializerMethodField()
     mission_title = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_count_client = serializers.ReadOnlyField()
@@ -113,6 +160,28 @@ class ConversationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'last_message_at',
             'unread_count_client', 'unread_count_agent'
         ]
+    
+    def get_client(self, obj):
+        if obj.client:
+            return {
+                'id': str(obj.client.id),
+                'username': obj.client.username,
+                'first_name': obj.client.first_name,
+                'last_name': obj.client.last_name,
+                'avatar_url': getattr(obj.client, 'avatar_url', None),
+            }
+        return None
+    
+    def get_agent(self, obj):
+        if obj.agent:
+            return {
+                'id': str(obj.agent.id),
+                'username': obj.agent.username,
+                'first_name': obj.agent.first_name,
+                'last_name': obj.agent.last_name,
+                'avatar_url': getattr(obj.agent, 'avatar_url', None),
+            }
+        return None
     
     def get_mission_title(self, obj):
         if obj.mission:
