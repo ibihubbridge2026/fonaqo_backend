@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from django.contrib.gis.db import models as gis_models
 from django.db import models
 from django.conf import settings
@@ -53,14 +54,37 @@ class Mission(models.Model):
         default=0.00,
         help_text="Frais de prestation conservés en séquestre jusqu'à la fin de la mission",
     )
+    labor_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        help_text="Montant main d'œuvre (séquestre jusqu'à complétion)",
+    )
+    material_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        help_text="Montant matériel / fournitures (libéré sur validation admin)",
+    )
+    material_released = models.BooleanField(
+        default=False,
+        help_text="Indique si le montant matériel a été libéré à l'agent",
+    )
 
     # État & Sécurité (Point 7)
     status = models.CharField(max_length=20, choices=MissionStatus.choices, default=MissionStatus.PENDING)
+    tracking_code = models.CharField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=_('Code de suivi public (ex: FNC-4829-BJ)'),
+    )
     qr_code_token = models.CharField(max_length=100, unique=True, blank=True)
     qr_expires_at = models.DateTimeField(null=True, blank=True)
     
     # Logique conditionnelle (Module 2)
-    requires_procuration = models.BooleanField(default=False, help_text="La mission nécessite une procuration")
     target_agent_username = models.CharField(max_length=150, null=True, blank=True, help_text="Username de l'agent cible si assignation manuelle")
     is_urgent = models.BooleanField(default=False, help_text="Mission urgente : agents notifiés en priorité (+500 FCFA)")
     is_confidential = models.BooleanField(default=False, help_text="Agent interne Fonaqo : recruté et encadré par Fonaqo (+500 FCFA)")
@@ -76,6 +100,11 @@ class Mission(models.Model):
     )
     purchase_released = models.BooleanField(default=False, help_text="Indique si le montant des achats a déjà été transféré à l'agent")
     
+    price_negotiation_allowed = models.BooleanField(
+        default=False,
+        help_text="Le client autorise l'agent à proposer un nouveau tarif via le chat",
+    )
+
     # Preuves
     start_photo = models.ImageField(upload_to='missions/proofs/start/', null=True, blank=True)
     end_photo = models.ImageField(upload_to='missions/proofs/end/', null=True, blank=True)
@@ -102,6 +131,20 @@ class Mission(models.Model):
     def save(self, *args, **kwargs):
         if not self.qr_code_token:
             self.qr_code_token = uuid.uuid4().hex
+        labor = self.labor_cost or self.service_amount or Decimal('0')
+        material = self.material_cost or self.purchase_amount or Decimal('0')
+        if labor > 0 or material > 0:
+            if not self.labor_cost and self.service_amount:
+                self.labor_cost = self.service_amount
+            if not self.material_cost and self.purchase_amount:
+                self.material_cost = self.purchase_amount
+            if not self.service_amount and self.labor_cost:
+                self.service_amount = self.labor_cost
+            if not self.purchase_amount and self.material_cost:
+                self.purchase_amount = self.material_cost
+            total = labor + material + (self.service_fee or Decimal('0'))
+            if total > 0:
+                self.price = total
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -385,3 +428,34 @@ class AgentStatistics(models.Model):
     
     def __str__(self):
         return f"Stats {self.agent.username or self.agent.email}"
+
+
+class MaterialWithdrawalRequest(models.Model):
+    """Demande de déblocage des fonds matériel par l'agent."""
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', _('En attente')
+        APPROVED = 'APPROVED', _('Approuvée')
+        REJECTED = 'REJECTED', _('Rejetée')
+
+    mission = models.ForeignKey(
+        Mission,
+        on_delete=models.CASCADE,
+        related_name='material_withdrawal_requests',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('demande déblocage matériel')
+        verbose_name_plural = _('demandes déblocage matériel')
+
+    def __str__(self):
+        return f'MaterialWithdrawal({self.mission_id}, {self.status})'

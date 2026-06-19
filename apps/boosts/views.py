@@ -96,7 +96,8 @@ class AgentBoostViewSet(viewsets.ModelViewSet):
             if payment_method == 'wallet':
                 from apps.wallets.models import Wallet, Transaction as WalletTransaction
 
-                wallet = Wallet.objects.select_for_update().get(user=user)
+                wallet, _ = Wallet.objects.get_or_create(user=user)
+                wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
                 if wallet.balance < amount:
                     return Response(
                         {'message': 'Solde insuffisant.'},
@@ -116,6 +117,16 @@ class AgentBoostViewSet(viewsets.ModelViewSet):
                 if not transaction_id:
                     return Response(
                         {'message': 'transaction_id FeexPay requis.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                from apps.payments.services import FeexPayService
+                try:
+                    FeexPayService.verify_payment(
+                        user, transaction_id, expected_amount=amount,
+                    )
+                except ValueError as exc:
+                    return Response(
+                        {'message': str(exc)},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
             else:

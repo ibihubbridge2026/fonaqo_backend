@@ -29,14 +29,12 @@ class EscrowFlowTests(TestCase):
             password='testpass123',
             is_agent=True,
         )
-        self.client_wallet = Wallet.objects.create(
-            user=self.client_user,
-            balance=Decimal('50000.00'),
-        )
-        self.agent_wallet = Wallet.objects.create(
-            user=self.agent_user,
-            balance=Decimal('0.00'),
-        )
+        self.client_wallet, _ = Wallet.objects.get_or_create(user=self.client_user)
+        self.client_wallet.balance = Decimal('50000.00')
+        self.client_wallet.save(update_fields=['balance', 'updated_at'])
+        self.agent_wallet, _ = Wallet.objects.get_or_create(user=self.agent_user)
+        self.agent_wallet.balance = Decimal('0.00')
+        self.agent_wallet.save(update_fields=['balance', 'updated_at'])
         self.mission = Mission.objects.create(
             client=self.client_user,
             title='Test mission',
@@ -63,8 +61,8 @@ class EscrowFlowTests(TestCase):
         escrow = Escrow.objects.get(mission=self.mission)
 
         self.assertEqual(escrow.status, EscrowStatus.HELD)
-        self.assertEqual(escrow.amount, Decimal('5500.00'))
-        self.assertEqual(self.client_wallet.escrow_balance, Decimal('5500.00'))
+        self.assertEqual(escrow.amount, Decimal('6500.00'))
+        self.assertEqual(self.client_wallet.escrow_balance, Decimal('6500.00'))
         self.assertEqual(self.agent_wallet.balance, Decimal('1000.00'))
 
     def test_release_to_agent_is_idempotent(self):
@@ -78,7 +76,7 @@ class EscrowFlowTests(TestCase):
         EscrowService.release_to_agent(self.mission)
 
         self.agent_wallet.refresh_from_db()
-        self.assertEqual(self.agent_wallet.balance, Decimal('6500.00'))
+        self.assertEqual(self.agent_wallet.balance, Decimal('6850.00'))
 
     def test_insufficient_balance_raises(self):
         self.client_wallet.balance = Decimal('100.00')

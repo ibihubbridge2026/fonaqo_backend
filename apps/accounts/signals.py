@@ -13,7 +13,6 @@ from celery import shared_task
 
 from .models import User
 from apps.notifications.services import NotificationService
-from apps.wallets.models import Wallet
 
 User = get_user_model()
 
@@ -83,24 +82,22 @@ def notify_agent_verification(sender, instance, **kwargs):
         )
 
 @receiver(post_save, sender=User)
-def create_user_wallet_and_referral(sender, instance, created, **kwargs):
-    if created:
-        # Créer le wallet automatiquement à l'inscription
-        Wallet.objects.get_or_create(user=instance)
-        
-        try:
-            send_welcome_email_task.apply_async(
-                kwargs={
-                    'user_id': str(instance.id),
-                    'user_email': instance.email,
-                    'username': instance.get_full_name() or instance.username,
-                },
-                ignore_result=True,
-            )
-        except (ConnectionError, TimeoutError, celery.exceptions.CeleryError):
-            logger.warning("Impossible d'envoyer l'email de bienvenue (Celery indisponible)")
-        
-        # Si parrainé, on peut envoyer une notification au parrain
-        if instance.referred_by:
-            # On pourrait ici verser un bonus de 500 FCFA par exemple
-            pass            
+def send_welcome_email_on_signup(sender, instance, created, **kwargs):
+    """Portefeuille créé par apps.wallets.signals — pas de doublon ici."""
+    if not created or getattr(instance, 'is_guest', False):
+        return
+
+    try:
+        send_welcome_email_task.apply_async(
+            kwargs={
+                'user_id': str(instance.id),
+                'user_email': instance.email,
+                'username': instance.get_full_name() or instance.username,
+            },
+            ignore_result=True,
+        )
+    except Exception:
+        logger.warning("Impossible d'envoyer l'email de bienvenue (Celery indisponible)")
+
+    if instance.referred_by:
+        pass

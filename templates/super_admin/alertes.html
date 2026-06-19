@@ -1,0 +1,62 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Centre de notifications</h2>
+    <p>Alertes missions, conciergerie et activité live</p>
+  </div>
+</div>
+
+{% if stale_missions %}
+<section class="fq-card fq-card-padded mb-6" style="border-left:4px solid var(--fq-warning)">
+  <h3 class="fq-section-title mb-4 flex items-center gap-2">
+    {% include "super_admin/partials/icon.html" with name="warning" class="w-5 h-5 text-[var(--fq-warning)]" %}
+    Missions non acceptées (T+5 min)
+  </h3>
+  <div class="space-y-3">
+    {% for m in stale_missions %}
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-[var(--fq-bg)]">
+      <div>
+        <p class="font-semibold">#{{ m.id|stringformat:"s"|slice:":8"|upper }} — {{ m.title|truncatechars:50 }}</p>
+        <p class="text-sm text-[var(--fq-muted)]">{{ m.client.username|default:m.client.phone_number }} · {{ m.created_at|timesince }} ago</p>
+      </div>
+      <button type="button" data-admin-action="open-assign" data-mission-id="{{ m.id }}" data-mission-ref="#{{ m.id|stringformat:'s'|slice:':8'|upper }}"
+        class="fq-btn fq-btn-primary fq-btn-sm">Assigner un agent</button>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<div class="fq-stat-grid mb-6">
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Alertes non lues</p>
+    <p class="fq-stat-value" style="font-size:22px" data-kpi="alerts_unread">{{ pending_alerts|length }}</p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Missions T+5</p>
+    <p class="fq-stat-value" style="font-size:22px" data-kpi="stale_pending">{{ stale_missions|length }}</p>
+  </div>
+</div>
+
+<div class="fq-grid-2">
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-4 flex items-center gap-2">Activité récente <span class="fq-live-dot"></span></h3>
+    <div id="ops-activity-feed" class="fq-timeline min-h-[120px]">
+      <div class="fq-skeleton h-10 w-full mb-2"></div>
+      <div class="fq-skeleton h-10 w-full"></div>
+    </div>
+  </div>
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-4">Notes de conciergerie</h3>
+    <textarea id="ops-notes" class="fq-input h-28 py-3 resize-none" placeholder="Note pour l'équipe…"></textarea>
+    <button type="button" data-admin-action="save-ops-note" class="fq-btn fq-btn-primary fq-btn-sm mt-3">Enregistrer</button>
+  </div>
+</div>
+
+<script type="application/json" id="assign-agents-json">
+[{% for a in agents_for_assign %}{"id":"{{ a.id }}","username":"{{ a.username }}"}{% if not forloop.last %},{% endif %}{% endfor %}]
+</script>
+{% endblock %}

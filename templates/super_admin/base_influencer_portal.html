@@ -1,0 +1,36 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}FONAQO Influenceur{% endblock %}</title>
+  <link rel="icon" href="{% static 'super_admin/fonaco-logo.png' %}" type="image/png"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="{% static 'super_admin/admin.css' %}?v=20250624"/>
+</head>
+<body class="fq-influencer-portal" data-admin-page="{{ active_nav|default:'influencer_portal' }}" data-fq-build="20250624">
+  <header class="fq-influencer-header">
+    <div class="fq-influencer-brand">
+      <img src="{% static 'super_admin/fonaco-logo.png' %}" alt="FONAQO" width="40" height="40"/>
+      <div>
+        <p class="font-bold text-sm">Espace Influenceur</p>
+        <p class="text-xs text-[var(--fq-muted)]">{{ request.user.get_full_name|default:request.user.username }}</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <form method="post" action="{% url 'admin-portal-logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="fq-btn fq-btn-secondary fq-btn-sm">Déconnexion</button>
+      </form>
+    </div>
+  </header>
+  <main class="fq-influencer-main">
+    {% block content %}{% endblock %}
+  </main>
+  {% include "super_admin/_admin_modals.html" %}
+  <div id="admin-toast" class="fq-toast hidden" role="alert"></div>
+  <script src="{% static 'super_admin/admin.js' %}?v=20250624"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

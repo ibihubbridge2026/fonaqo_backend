@@ -1,0 +1,117 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Configuration{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Configuration</h2>
+    <p>Paramètres plateforme et frais</p>
+  </div>
+</div>
+
+<div data-tabs>
+  <div class="fq-tabs">
+    <button type="button" data-tab-btn="general" class="fq-tab active">Général</button>
+    <button type="button" data-tab-btn="payments" class="fq-tab">Paiements</button>
+    <button type="button" data-tab-btn="escrow" class="fq-tab">Escrow</button>
+    <button type="button" data-tab-btn="boost" class="fq-tab">Boost</button>
+    <button type="button" data-tab-btn="security" class="fq-tab">Sécurité</button>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+    <div class="xl:col-span-7 space-y-6">
+      <div data-tab-panel="general" class="fq-card fq-card-padded">
+        <div class="flex items-center justify-between mb-6">
+          <h3 class="fq-section-title">Rayon de recherche agents</h3>
+          <span class="fq-badge fq-badge-default mono font-bold"><span id="radius-value">15</span> km</span>
+        </div>
+        <input id="radius-slider" type="range" min="1" max="50" value="15" class="w-full accent-[#FFD100]"/>
+        <p class="text-xs text-[var(--fq-muted)] mt-3">Clé : <code>AGENT_SEARCH_RADIUS_KM</code></p>
+        <div class="mt-8 pt-6 border-t border-[var(--fq-border-light)]">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="fq-section-title">Délai missions agents non boost</h3>
+            <span class="fq-badge fq-badge-default mono font-bold"><span id="delay-value">10</span> min</span>
+          </div>
+          <p class="text-sm text-[var(--fq-muted)] mb-4">Temps avant qu'une nouvelle mission apparaisse dans le panier des agents standard (les agents boost la voient immédiatement).</p>
+          <form id="form-agent-delay" class="flex flex-wrap items-end gap-4">
+            <div class="flex-1 min-w-[140px]">
+              <label class="fq-label">AGENT_MISSION_DELAY_MINUTES</label>
+              <input id="agent-mission-delay" name="AGENT_MISSION_DELAY_MINUTES" type="number" min="0" max="120" class="fq-input mono mt-1"/>
+            </div>
+            <button type="submit" class="fq-btn fq-btn-primary">Enregistrer</button>
+          </form>
+        </div>
+      </div>
+
+      <div data-tab-panel="payments" class="hidden fq-card fq-card-padded">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="fq-stat-icon">{% include "super_admin/partials/icon.html" with name="fee" class="w-5 h-5" %}</div>
+          <h3 class="fq-section-title">Structure des frais</h3>
+        </div>
+        <form id="form-platform-fees" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label class="fq-label">FEES_URGENT</label>
+            <input id="fees-urgent" name="FEES_URGENT" type="number" class="fq-input mono mt-1"/>
+          </div>
+          <div>
+            <label class="fq-label">FEES_CONFIDENTIAL</label>
+            <input id="fees-confidential" name="FEES_CONFIDENTIAL" type="number" class="fq-input mono mt-1"/>
+          </div>
+          <div class="md:col-span-2">
+            <button type="submit" class="fq-btn fq-btn-primary">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+
+      <div data-tab-panel="escrow" class="hidden fq-card fq-card-padded">
+        <h3 class="fq-section-title mb-2">Split escrow (sensible)</h3>
+        <p class="text-sm text-[var(--fq-muted)] mb-4">Répartition standard des fonds mission. La somme doit être 100%.</p>
+        <form id="form-revenue-split" class="grid grid-cols-3 gap-4 mb-4">
+          <div><label class="fq-label">Agent %</label><input id="split-agent-pct" type="number" min="0" max="100" class="fq-input mono mt-1"/></div>
+          <div><label class="fq-label">Plateforme %</label><input id="split-platform-pct" type="number" min="0" max="100" class="fq-input mono mt-1"/></div>
+          <div><label class="fq-label">Influenceur %</label><input id="split-influencer-pct" type="number" min="0" max="100" class="fq-input mono mt-1"/></div>
+          <div class="col-span-3"><button type="submit" class="fq-btn fq-btn-primary">Enregistrer le split</button></div>
+        </form>
+        <div id="split-sum-warning" class="text-xs text-[var(--fq-danger)] hidden">La somme doit être exactement 100%.</div>
+      </div>
+
+      <div data-tab-panel="boost" class="hidden fq-card fq-card-padded">
+        <h3 class="fq-section-title mb-4">Plans Boost & promo</h3>
+        <div id="boost-plans-config" class="space-y-3 mb-6">
+          {% for plan in boost_plans %}
+          <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--fq-bg)] border border-[var(--fq-border-light)]">
+            <div><p class="font-semibold">{{ plan.name }}</p><p class="text-xs text-[var(--fq-muted)]">{{ plan.duration_hours }}h · x{{ plan.visibility_multiplier }}</p></div>
+            <div class="flex items-center gap-2">
+              <span class="mono font-bold">{{ plan.price|floatformat:0 }} FCFA</span>
+              <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" data-plan-price="{{ plan.price }}" data-plan-hours="{{ plan.duration_hours }}" class="fq-btn fq-btn-ghost fq-btn-sm">Modifier</button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <form id="form-boost-promo" class="grid grid-cols-2 gap-4 border-t pt-4">
+          <div><label class="fq-label">Promo boost (%)</label><input id="boost-promo-percent" type="number" min="0" max="100" class="fq-input mt-1" placeholder="0 = pas de promo"/></div>
+          <div><label class="fq-label">Fin promo (date)</label><input id="boost-promo-until" type="date" class="fq-input mt-1"/></div>
+          <div class="col-span-2"><button type="submit" class="fq-btn fq-btn-primary">Enregistrer la promo</button></div>
+        </form>
+      </div>
+
+      <div data-tab-panel="security" class="hidden fq-card fq-card-padded">
+        <h3 class="fq-section-title mb-2">Sécurité & profil</h3>
+        <p class="text-sm text-[var(--fq-muted)] mb-4">Gérez votre profil et mot de passe sur la page dédiée (accessible à tous les rôles staff).</p>
+        <a href="{% url 'admin-profile' %}" class="fq-btn fq-btn-primary fq-btn-sm">Ouvrir Mon profil →</a>
+        {% if is_super_admin %}
+        <a href="{% url 'admin-audit' %}" class="fq-btn fq-btn-secondary fq-btn-sm ml-2">Journal d'activité</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="xl:col-span-5 fq-card fq-card-padded">
+      <h3 class="fq-section-title mb-4">Paramètres plateforme</h3>
+      <div id="config-keys-list" class="space-y-2 max-h-96 overflow-y-auto custom-scrollbar">
+        <div class="fq-skeleton h-14 w-full"></div>
+        <div class="fq-skeleton h-14 w-full"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

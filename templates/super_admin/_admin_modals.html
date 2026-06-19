@@ -1,0 +1,188 @@
+<div id="modal-assign-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-assign" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b flex justify-between items-center">
+      <h3 class="fq-section-title">Assigner un agent</h3>
+      <button type="button" data-modal-close="modal-assign" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <form id="form-assign-agent" class="p-6 space-y-4">
+      <input type="hidden" id="assign-mission-id"/>
+      <p class="text-sm text-[var(--fq-muted)]">Mission <strong id="assign-mission-ref" class="text-[var(--fq-black)]">—</strong></p>
+      <div>
+        <label class="fq-label">Agent</label>
+        <select id="assign-agent-id" required class="fq-input mt-1"></select>
+      </div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Confirmer</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-arbitrage-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-arbitrage" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b">
+      <h3 class="fq-section-title">Arbitrage personnalisé</h3>
+      <p class="text-xs text-[var(--fq-muted)] mt-1">Répartition client / agent (total = 100%)</p>
+    </div>
+    <form id="form-arbitrage-split" class="p-6 space-y-4">
+      <input type="hidden" id="arbitrage-dispute-id"/>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="fq-label">% Client</label><input id="arbitrage-client-pct" type="number" min="0" max="100" value="50" class="fq-input mono mt-1"/></div>
+        <div><label class="fq-label">% Agent</label><input id="arbitrage-agent-pct" type="number" min="0" max="100" value="50" class="fq-input mono mt-1"/></div>
+      </div>
+      <div><label class="fq-label">Notes</label><textarea id="arbitrage-notes" rows="2" class="fq-input mt-1 py-2"></textarea></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Appliquer</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-confirm-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-confirm" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-sm p-6 text-center">
+    <div class="w-14 h-14 mx-auto mb-4 rounded-full bg-[var(--fq-yellow-soft)] flex items-center justify-center">
+      {% include "super_admin/partials/icon.html" with name="help" class="w-7 h-7" %}
+    </div>
+    <h3 id="confirm-title" class="fq-section-title mb-2">Confirmer ?</h3>
+    <p id="confirm-message" class="text-sm text-[var(--fq-muted)] mb-6"></p>
+    <div class="flex gap-3">
+      <button type="button" data-modal-close="modal-confirm" class="fq-btn fq-btn-secondary flex-1">Annuler</button>
+      <button type="button" id="confirm-action-btn" class="fq-btn fq-btn-primary flex-1">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-influencer-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-influencer" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b flex justify-between items-center">
+      <h3 class="fq-section-title" id="influencer-modal-title">Nouvel influenceur</h3>
+      <button type="button" data-modal-close="modal-influencer" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <form id="form-influencer-modal" class="p-6 space-y-4">
+      <input type="hidden" id="influencer-edit-id"/>
+      <div><label class="fq-label">Nom</label><input id="influencer-name" required class="fq-input mt-1"/></div>
+      <div><label class="fq-label">Code promo</label><input id="influencer-code" required class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Slug deep link</label><input id="influencer-slug" class="fq-input mono mt-1" placeholder="Optionnel"/></div>
+      <div><label class="fq-label">Commission (ex: 0.02 = 2%)</label><input id="influencer-rate" type="number" step="0.01" value="0.02" class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Durée contrat (années)</label><input id="influencer-duration" type="number" min="1" value="2" class="fq-input mt-1"/></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Enregistrer</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-artisan-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-artisan" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-lg">
+    <div class="p-6 border-b flex justify-between items-center">
+      <h3 class="fq-section-title">Créer un artisan expert</h3>
+      <button type="button" data-modal-close="modal-artisan" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <form id="form-artisan-create" class="p-6 space-y-4">
+      <p class="text-xs text-[var(--fq-muted)]">Création manuelle par le staff — le client ne peut pas s'inscrire en artisan.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="fq-label">Nom complet</label><input name="name" required class="fq-input mt-1"/></div>
+        <div><label class="fq-label">Téléphone</label><input name="phone_number" required class="fq-input mono mt-1"/></div>
+        <div><label class="fq-label">Username</label><input name="username" class="fq-input mono mt-1" placeholder="Auto si vide"/></div>
+        <div><label class="fq-label">Email</label><input name="email" type="email" class="fq-input mt-1"/></div>
+        <div class="col-span-2"><label class="fq-label">Spécialités</label><input name="specialties" class="fq-input mt-1"/></div>
+        <div class="col-span-2"><label class="fq-label">Mot de passe temporaire</label><input name="password" type="password" class="fq-input mt-1" placeholder="Généré si vide"/></div>
+      </div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Créer l'artisan</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-staff-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-staff" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b flex justify-between items-center">
+      <h3 class="fq-section-title">Créer un compte staff</h3>
+      <button type="button" data-modal-close="modal-staff" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <form id="form-staff-create" class="p-6 space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="fq-label">Prénom</label><input name="first_name" class="fq-input mt-1"/></div>
+        <div><label class="fq-label">Nom</label><input name="last_name" class="fq-input mt-1"/></div>
+      </div>
+      <div><label class="fq-label">Username</label><input name="username" required class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Email</label><input name="email" type="email" required class="fq-input mt-1"/></div>
+      <div><label class="fq-label">Mot de passe</label><input name="password" type="password" required class="fq-input mt-1"/></div>
+      <div>
+        <label class="fq-label">Rôle</label>
+        <select name="role" class="fq-input mt-1">
+          <option value="manager">Gestionnaire</option>
+          <option value="superadmin">Super Admin</option>
+        </select>
+      </div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Créer le compte</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-boost-plan-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-boost-plan" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-sm">
+    <div class="p-6 border-b"><h3 class="fq-section-title">Modifier forfait Boost</h3></div>
+    <form id="form-boost-plan" class="p-6 space-y-4">
+      <input type="hidden" id="boost-plan-id"/>
+      <div><label class="fq-label">Prix (FCFA)</label><input id="boost-plan-price" type="number" min="0" class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Durée (heures)</label><input id="boost-plan-hours" type="number" min="1" class="fq-input mt-1"/></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Enregistrer</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-withdrawal-request-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-withdrawal-request" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-sm">
+    <div class="p-6 border-b flex justify-between items-center">
+      <h3 class="fq-section-title">Demande de retrait</h3>
+      <button type="button" data-modal-close="modal-withdrawal-request" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <form id="form-withdrawal-request" class="p-6 space-y-4">
+      <input type="hidden" id="withdrawal-influencer-id"/>
+      <div><label class="fq-label">Montant (FCFA)</label><input id="withdrawal-amount" type="number" min="1" required class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Note (optionnel)</label><textarea id="withdrawal-note" rows="2" class="fq-input mt-1 py-2"></textarea></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Envoyer la demande</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-withdrawal-approve-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-withdrawal-approve" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b"><h3 class="fq-section-title">Valider le retrait</h3><p class="text-xs text-[var(--fq-muted)] mt-1">Joignez une preuve de versement (capture, reçu…)</p></div>
+    <form id="form-withdrawal-approve" class="p-6 space-y-4" enctype="multipart/form-data">
+      <input type="hidden" id="withdrawal-approve-id"/>
+      <p class="text-sm">Montant : <strong id="withdrawal-approve-amount" class="mono">—</strong></p>
+      <div><label class="fq-label">Preuve de versement</label><input id="withdrawal-proof-file" name="proof_file" type="file" required accept="image/*,.pdf" class="fq-input mt-1 py-2"/></div>
+      <div><label class="fq-label">Note admin</label><textarea id="withdrawal-admin-note" rows="2" class="fq-input mt-1 py-2"></textarea></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Valider et déduire le solde</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-influencer-portal-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-influencer-portal" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-md">
+    <div class="p-6 border-b"><h3 class="fq-section-title">Créer accès portail influenceur</h3></div>
+    <form id="form-influencer-portal" class="p-6 space-y-4">
+      <input type="hidden" id="portal-link-influencer-id"/>
+      <div><label class="fq-label">Username</label><input name="username" required class="fq-input mono mt-1"/></div>
+      <div><label class="fq-label">Email</label><input name="email" type="email" required class="fq-input mt-1"/></div>
+      <div><label class="fq-label">Mot de passe</label><input name="password" type="password" required class="fq-input mt-1"/></div>
+      <button type="submit" class="fq-btn fq-btn-primary w-full">Créer le compte</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal-row-detail-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-row-detail" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+    <div class="p-6 border-b flex items-center justify-between">
+      <h3 class="fq-section-title" id="row-detail-title">Détails</h3>
+      <button type="button" data-admin-action="close-row-detail" class="fq-icon-btn">×</button>
+    </div>
+    <div id="row-detail-body" class="p-6 overflow-y-auto space-y-3 text-sm"></div>
+  </div>
+</div>

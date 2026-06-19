@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from django.contrib.gis.geos import Point
+from decimal import Decimal
 from .models import Mission, MissionProof, MissionTimelineEvent, AgentStatistics
 from django.contrib.auth import get_user_model
+from apps.core.services import PlatformConfigService
+from apps.escrow.services import PLATFORM_COMMISSION_RATE
 
 User = get_user_model()
 
@@ -180,7 +183,11 @@ class MissionDetailSerializer(serializers.ModelSerializer):
     agent_latitude = serializers.SerializerMethodField()
     agent_longitude = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
+    client_avatar_url = serializers.SerializerMethodField()
+    description_audio_url = serializers.SerializerMethodField()
     escrow_status = serializers.SerializerMethodField()
+    end_photo_url = serializers.SerializerMethodField()
+    price_negotiation_allowed = serializers.BooleanField(read_only=True)
     tags = serializers.SlugRelatedField(many=True, read_only=True, slug_field='name')
     category = serializers.SerializerMethodField()
     latitude = serializers.SerializerMethodField()
@@ -192,19 +199,48 @@ class MissionDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'client_name', 'client_email',
             'agent_name', 'agent_phone', 'agent_email', 'agent_rating',
             'agent_latitude', 'agent_longitude',
-            'avatar_url', 'escrow_status', 'tags', 'category',
+            'avatar_url', 'client_avatar_url', 'description_audio_url',
+            'escrow_status', 'tags', 'category',
             'latitude', 'longitude', 'address', 'price', 'service_fee',
-            'purchase_amount', 'service_amount', 'is_urgent', 'is_confidential',
+            'purchase_amount', 'service_amount', 'labor_cost', 'material_cost',
+            'material_released',
+            'is_urgent', 'is_confidential',
             'is_vocal_description', 'description_audio',
-            'target_agent_username', 'status', 'requires_procuration',
+            'target_agent_username', 'status',
             'qr_code_token', 'client_rating', 'client_comment',
+            'end_photo_url', 'price_negotiation_allowed',
             'created_at', 'updated_at',
         ]
 
     def get_client_name(self, obj):
-        if obj.client:
-            return obj.client.username or obj.client.email
-        return None
+        if not obj.client:
+            return None
+        name = f'{obj.client.first_name or ""} {obj.client.last_name or ""}'.strip()
+        if name:
+            return name
+        username = obj.client.username or ''
+        if username.startswith('client_') or username.startswith('agent_'):
+            return 'Client Fonaqo'
+        return username or obj.client.email
+
+    @staticmethod
+    def _profile_picture_url(user, request):
+        if not user or not user.profile_picture:
+            return None
+        if request:
+            return request.build_absolute_uri(user.profile_picture.url)
+        return user.profile_picture.url
+
+    def get_client_avatar_url(self, obj):
+        return self._profile_picture_url(obj.client, self.context.get('request'))
+
+    def get_description_audio_url(self, obj):
+        if not obj.description_audio:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.description_audio.url)
+        return obj.description_audio.url
 
     def get_category(self, obj):
         first_tag = obj.tags.first()
@@ -237,17 +273,20 @@ class MissionDetailSerializer(serializers.ModelSerializer):
         return obj.agent.longitude if obj.agent else None
 
     def get_avatar_url(self, obj):
-        if obj.agent and obj.agent.profile_picture:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.agent.profile_picture.url)
-            return obj.agent.profile_picture.url
-        return None
+        return self._profile_picture_url(obj.agent, self.context.get('request'))
 
     def get_escrow_status(self, obj):
         if hasattr(obj, 'escrow'):
             return obj.escrow.status
         return None
+
+    def get_end_photo_url(self, obj):
+        if not obj.end_photo:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.end_photo.url)
+        return obj.end_photo.url
 
     def get_latitude(self, obj):
         return obj.location.y if obj.location else None
@@ -314,13 +353,6 @@ class MissionCreateSerializer(serializers.Serializer):
             'max_decimal_places': 'Les frais de service ne peuvent avoir que 2 décimales.'
         }
     )
-    requires_procuration = serializers.BooleanField(
-        default=False,
-        required=False,
-        error_messages={
-            'invalid': 'La valeur de procuration doit être vrai ou faux.'
-        }
-    )
     target_agent_username = serializers.CharField(
         max_length=150,
         required=False,
@@ -367,6 +399,18 @@ class MissionCreateSerializer(serializers.Serializer):
             'max_decimal_places': 'Le montant de la prestation ne peut avoir que 2 décimales.'
         }
     )
+    labor_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        required=False,
+    )
+    material_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        required=False,
+    )
     recurrence = serializers.CharField(
         max_length=20,
         required=False,
@@ -401,6 +445,21 @@ class MissionCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'description': 'La description est obligatoire en mode texte.'}
             )
+
+        is_urgent = bool(attrs.get('is_urgent', False))
+        is_confidential = bool(attrs.get('is_confidential', False))
+        options_fee = PlatformConfigService.mission_options_fee(
+            is_urgent=is_urgent,
+            is_confidential=is_confidential,
+        )
+        labor = (
+            attrs.get('labor_cost')
+            or attrs.get('service_amount')
+            or attrs.get('price')
+            or Decimal('0')
+        )
+        platform_fee = Decimal(str(labor)) * PLATFORM_COMMISSION_RATE
+        attrs['service_fee'] = (platform_fee + options_fee).quantize(Decimal('0.01'))
         return attrs
 
     def validate_target_agent_username(self, value):
@@ -428,6 +487,14 @@ class MissionCreateSerializer(serializers.Serializer):
         description_audio = validated_data.pop('description_audio', None)
         validated_data['location'] = Point(lng, lat, srid=4326)
         validated_data['client'] = self.context['request'].user
+        labor = validated_data.get('labor_cost') or validated_data.get('service_amount')
+        material = validated_data.get('material_cost') or validated_data.get('purchase_amount')
+        if labor:
+            validated_data['labor_cost'] = labor
+            validated_data['service_amount'] = labor
+        if material:
+            validated_data['material_cost'] = material
+            validated_data['purchase_amount'] = material
         mission = Mission.objects.create(**validated_data)
         if description_audio:
             mission.description_audio = description_audio

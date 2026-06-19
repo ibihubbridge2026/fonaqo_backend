@@ -2,7 +2,15 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+
+from apps.core.vitrine_views import (
+    VitrineAgentPublicView,
+    VitrineGuestCreateView,
+    VitrineGuestTrackView,
+)
+from apps.core.admin_urls import dashboard_patterns, portal_patterns
 
 
 # Regroupement des routes API pour une meilleure lisibilité
@@ -22,6 +30,8 @@ api_v1_patterns = [
     path('disputes/', include('apps.disputes.urls')),
     path('statistics/', include('apps.statistics.urls')),
     path('leboncoin/', include('apps.leboncoin.urls')),
+    path('core/', include('apps.core.api_urls')),
+    path('config/', include('apps.core.config_urls')),
     path('staff/', include('apps.core.staff_urls')),
 ]
 
@@ -31,6 +41,12 @@ api_v2_patterns = list(api_v1_patterns)
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('health/', include('apps.core.urls')),
+    path('admin-portal/', include(portal_patterns)),
+    path('admin-dashboard/', include(dashboard_patterns)),
+    path('track/', VitrineGuestTrackView.as_view(), name='public-mission-track'),
+    path('vitrine/creer-mission/', VitrineGuestCreateView.as_view(), name='vitrine-guest-create'),
+    path('vitrine/suivi/', VitrineGuestTrackView.as_view(), name='vitrine-guest-track'),
+    path('vitrine/agent/<uuid:agent_id>/', VitrineAgentPublicView.as_view(), name='vitrine-agent-public'),
     path('api/v1/', include(api_v1_patterns)),
     path('api/v2/', include(api_v2_patterns)),
     
@@ -39,7 +55,9 @@ urlpatterns = [
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
 ]
 
-# Service des fichiers média et statiques en développement
+# Fichiers statiques : static/ live en DEBUG ; staticfiles/ collectés sinon (voir collectstatic au démarrage Docker)
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += staticfiles_urlpatterns()
+else:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

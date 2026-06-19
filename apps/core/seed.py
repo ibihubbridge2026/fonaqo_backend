@@ -1,5 +1,10 @@
 """
-Moteur de seeding FONAQO — source unique pour `manage.py seed_data` et scripts/seed_v2.py.
+Initialisation minimale FONAQO — un seul compte SuperAdmin.
+
+Usage :
+  python manage.py seed_data [password] [--flush]
+  make seed          # crée l'admin si absent
+  make reset-seed    # flush + admin unique
 """
 from __future__ import annotations
 
@@ -11,9 +16,11 @@ from django.contrib.gis.geos import Point
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.choices import AgentKYCStatus, AgentLevelName, MissionStatus
+from apps.core.choices import AgentKYCStatus, AgentLevelName, EscrowStatus, MissionStatus
 from apps.accounts.models import AgentProfile
 from apps.boosts.models import BoostPlan
+from apps.core.models import AdminAuditLog, AdminNotification, PlatformConfiguration
+from apps.core.services import FEES_CONFIDENTIAL_KEY, FEES_URGENT_KEY
 from apps.missions.models import AgentLevel, AgentStatistics, Mission, MissionTimelineEvent
 from apps.services.models import AgentService, Category
 from apps.wallets.models import Transaction as WalletTransaction
@@ -21,7 +28,15 @@ from apps.wallets.models import Wallet
 
 User = get_user_model()
 
-DEFAULT_PASSWORD = "password123"
+ADMIN_USERNAME = "admin_test"
+ADMIN_PHONE = "+22960000001"
+DEFAULT_PASSWORD = "Fonaco2026!"
+
+# Legacy demo seed (non invoqué par run_seed)
+UAT_ADMIN_USERNAME = ADMIN_USERNAME
+UAT_ADMIN_PASSWORD = DEFAULT_PASSWORD
+UAT_AGENT_USERNAME = "agent_terrain"
+UAT_AGENT_PASSWORD = "Agent2026!"
 
 COORDS = {
     "cadjehoun": (6.3735, 2.3904),
@@ -74,6 +89,69 @@ def create_boost_plans():
         )
         plans.append(plan)
     return plans
+
+
+def create_platform_config():
+    """Frais dynamiques plateforme (PlatformConfiguration)."""
+    PlatformConfiguration.objects.update_or_create(
+        key=FEES_URGENT_KEY,
+        defaults={'value': '500', 'description': 'Frais mission urgente (FCFA)'},
+    )
+    PlatformConfiguration.objects.update_or_create(
+        key=FEES_CONFIDENTIAL_KEY,
+        defaults={'value': '500', 'description': 'Frais agent interne / confidentiel (FCFA)'},
+    )
+
+
+def create_uat_accounts(stdout=None):
+    """
+    Comptes dédiés UAT / démo SuperAdmin web + agent avec wallet crédité.
+    Mots de passe fixes (distincts du seed demo password123).
+    """
+    write = stdout.write if stdout else print
+
+    admin, admin_created = User.objects.get_or_create(
+        username=UAT_ADMIN_USERNAME,
+        defaults={
+            'email': 'admin@fonaqo.com',
+            'phone_number': '+22960000001',
+            'is_staff': True,
+            'is_superuser': True,
+            'is_active': True,
+            'is_client': False,
+            'is_agent': False,
+        },
+    )
+    if admin_created or not admin.check_password(UAT_ADMIN_PASSWORD):
+        admin.set_password(UAT_ADMIN_PASSWORD)
+        admin.save()
+
+    agent, agent_created = User.objects.get_or_create(
+        username=UAT_AGENT_USERNAME,
+        defaults={
+            'email': 'agent@fonaqo.com',
+            'phone_number': '+22960000002',
+            'is_agent': True,
+            'is_client': False,
+            'is_verified': True,
+            'is_active': True,
+        },
+    )
+    if agent_created or not agent.check_password(UAT_AGENT_PASSWORD):
+        agent.set_password(UAT_AGENT_PASSWORD)
+        agent.save()
+
+    profile, _ = AgentProfile.objects.get_or_create(user=agent)
+    profile.kyc_status = AgentKYCStatus.APPROVED
+    profile.save(update_fields=['kyc_status', 'updated_at'])
+
+    wallet = get_or_create_wallet(agent, 25000.0)
+    wallet.balance = Decimal('25000')
+    wallet.save(update_fields=['balance', 'updated_at'])
+
+    write(f"  UAT Admin  : {UAT_ADMIN_USERNAME} / {UAT_ADMIN_PASSWORD}  → /admin-portal/login/")
+    write(f"  UAT Agent  : {UAT_AGENT_USERNAME} / {UAT_AGENT_PASSWORD}  (KYC OK, 25k FCFA)")
+    return admin, agent
 
 
 def create_agent_levels():
@@ -453,36 +531,120 @@ def create_missions(clients, agents_flat):
     return missions
 
 
+def create_escrow_and_dashboard_data(missions, admin_user):
+    """Escrow, splits 88/10/2, codes suivi, alertes admin pour le tableau de bord."""
+    from apps.escrow.models import Escrow, EscrowSplitRecord
+
+    active_statuses = {
+        MissionStatus.ACCEPTED,
+        MissionStatus.ON_THE_WAY,
+        MissionStatus.IN_PROGRESS,
+        MissionStatus.PENDING,
+    }
+    seq = 4829
+    for mission in missions:
+        if not mission.tracking_code:
+            mission.tracking_code = f'FNC-{seq}-BJ'
+            mission.save(update_fields=['tracking_code'])
+            seq += 1
+
+        if mission.status == MissionStatus.CANCELLED:
+            continue
+
+        escrow_status = EscrowStatus.RELEASED if mission.status == MissionStatus.COMPLETED else EscrowStatus.HELD
+        escrow, _ = Escrow.objects.get_or_create(
+            mission=mission,
+            defaults={'amount': mission.price, 'status': escrow_status},
+        )
+
+        if mission.status == MissionStatus.COMPLETED and mission.agent_id:
+            total = float(mission.price)
+            splits = [
+                (EscrowSplitRecord.BeneficiaryType.AGENT, round(total * 0.88, 2), mission.agent),
+                (EscrowSplitRecord.BeneficiaryType.PLATFORM, round(total * 0.10, 2), None),
+                (EscrowSplitRecord.BeneficiaryType.INFLUENCER, round(total * 0.02, 2), None),
+            ]
+            for bt, amt, user in splits:
+                EscrowSplitRecord.objects.get_or_create(
+                    mission=mission,
+                    beneficiary_type=bt,
+                    defaults={
+                        'amount_fcfa': Decimal(str(amt)),
+                        'beneficiary_user': user,
+                    },
+                )
+
+    pending = [m for m in missions if m.status == MissionStatus.PENDING and not m.agent_id]
+    if pending:
+        AdminNotification.objects.get_or_create(
+            title='Missions sans agent',
+            mission=pending[0],
+            defaults={
+                'category': AdminNotification.Category.MISSION_UNASSIGNED,
+                'severity': AdminNotification.Severity.WARNING,
+                'message': f'{len(pending)} mission(s) en attente d\'assignation agent.',
+            },
+        )
+
+    if admin_user:
+        AdminAuditLog.objects.get_or_create(
+            admin=admin_user,
+            action='SEED_DASHBOARD',
+            target_type='platform',
+            target_id='seed',
+            defaults={'detail': 'Données démo tableau de bord SuperAdmin initialisées.'},
+        )
+
+
+def create_only_admin(password: str = DEFAULT_PASSWORD, stdout=None):
+    """Crée ou met à jour le unique compte SuperAdmin."""
+    write = stdout.write if stdout else print
+
+    admin, created = User.objects.get_or_create(
+        username=ADMIN_USERNAME,
+        defaults={
+            'email': 'admin@fonaqo.com',
+            'phone_number': ADMIN_PHONE,
+            'first_name': 'Super',
+            'last_name': 'Admin',
+            'is_staff': True,
+            'is_superuser': True,
+            'is_active': True,
+            'is_verified': True,
+            'is_client': False,
+            'is_agent': False,
+        },
+    )
+    if created or not admin.check_password(password):
+        admin.set_password(password)
+        admin.save()
+    elif not admin.phone_number:
+        admin.phone_number = ADMIN_PHONE
+        admin.save(update_fields=['phone_number'])
+
+    write(f"  Admin : {ADMIN_USERNAME} / {ADMIN_PHONE} / {password}  → /admin-portal/login/")
+    return admin, created
+
+
 def run_seed(password: str = DEFAULT_PASSWORD, stdout=None):
-    """Exécute le seed complet. Retourne un résumé dict."""
+    """Vide optionnellement puis enregistre uniquement le compte SuperAdmin."""
     write = stdout.write if stdout else print
 
     with transaction.atomic():
-        levels = create_agent_levels()
-        create_boost_plans()
-        admin, admin_created = create_admin(password)
-        clients = create_clients(password)
-        agents_with_services = create_agents(password, levels)
-        categories = create_categories()
-        create_services(agents_with_services, categories)
-        agents_flat = [a for a, _ in agents_with_services]
-        missions = create_missions(clients, agents_flat)
+        admin, admin_created = create_only_admin(password, stdout=stdout)
 
     summary = {
-        "admin_phone": "+2290150088210",
-        "client_phones": ["+2290101010101", "+2290202020202"],
-        "agent_count": len(agents_flat),
-        "mission_count": len(missions),
-        "verified_agents": len(agents_flat),
-        "password": password,
-        "admin_created": admin_created,
+        'username': ADMIN_USERNAME,
+        'phone_number': ADMIN_PHONE,
+        'password': password,
+        'admin_created': admin_created,
+        'admin_id': str(admin.id),
     }
 
     write("\n" + "=" * 60)
-    write("SEEDING FONAQO — terminé")
-    write(f"  Admin    : {summary['admin_phone']} / {password}")
-    write(f"  Clients  : {', '.join(summary['client_phones'])} / {password}")
-    write(f"  Agents   : {summary['agent_count']} vérifiés (annuaire public/artisans/)")
-    write(f"  Missions : {summary['mission_count']}")
+    write("INIT FONAQO — admin unique enregistré")
+    write(f"  Login    : {ADMIN_USERNAME}")
+    write(f"  Téléphone: {ADMIN_PHONE}")
+    write(f"  Mot de passe : {password}")
     write("=" * 60 + "\n")
     return summary

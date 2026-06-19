@@ -16,7 +16,7 @@ import json
 import os
 import uuid
 from decimal import Decimal
-from .models import Mission, MissionProof, MissionTimelineEvent, AgentStatistics
+from .models import Mission, MissionProof, MissionTimelineEvent, AgentStatistics, MaterialWithdrawalRequest
 from .serializers import (
     MissionProofSerializer, MissionProofCreateSerializer,
     MissionTimelineEventSerializer, MissionTimelineEventCreateSerializer,
@@ -83,6 +83,12 @@ def _validate_mission_transition(current_status, new_status):
 
 
 def _agent_kyc_approved(user):
+    """
+    Règle KYC stricte FONACO :
+    - Un agent dont AgentProfile.kyc_status != APPROVED ne peut pas accepter de missions (HTTP 403).
+    - Côté Flutter : redirection vers KycLockScreen après connexion si isKycLocked.
+    - Les listes « available » / « assigned » renvoient des résultats vides tant que le KYC n'est pas approuvé.
+    """
     from apps.accounts.models import AgentProfile
     from apps.core.choices import AgentKYCStatus
     if not getattr(user, 'is_agent', False):
@@ -101,24 +107,75 @@ def _agent_has_active_boost(user):
     ).exists()
 
 
+_ACTIVE_MISSION_STATUSES = (
+    'ACCEPTED',
+    'ON_THE_WAY',
+    'ARRIVED',
+    'IN_PROGRESS',
+    'IN_PROGRESS_REVIEW',
+)
+
+
+def _count_agent_active_missions(user):
+    return Mission.objects.filter(
+        agent=user,
+        status__in=_ACTIVE_MISSION_STATUSES,
+    ).count()
+
+
+def _agent_completed_missions_count(user):
+    return Mission.objects.filter(agent=user, status='COMPLETED').count()
+
+
+def _agent_mission_capacity(user):
+    """Limite de missions simultanées selon profil agent."""
+    if _agent_has_active_boost(user):
+        return 5
+    if _agent_completed_missions_count(user) >= 50:
+        return 3
+    return 1
+
+
+def _agent_can_accept_more(user):
+    return _count_agent_active_missions(user) < _agent_mission_capacity(user)
+
+
 def _notify_agents_new_mission(mission):
-    """Push FCM + notification in-app aux agents en ligne et KYC approuvé."""
+    """Push FCM + notification in-app aux agents KYC approuvés."""
     from apps.accounts.models import AgentProfile
     from apps.core.choices import AgentKYCStatus
+    from apps.core.services import PlatformConfigService
 
-    agents = User.objects.filter(is_agent=True, is_online=True)
+    delay_min = PlatformConfigService.agent_mission_delay_minutes()
     title = 'Nouvelle mission disponible'
-    body = mission.title[:120] if mission.title else 'Une mission vient d\'être publiée.'
+    body = (
+        f'{mission.title[:100]} — visible dans votre panier '
+        f'dans {delay_min} min (priorité boost).'
+    )
     data = {
         'type': 'NEW_MISSION',
         'mission_id': str(mission.id),
+        'delay_minutes': str(delay_min),
     }
+    agents = User.objects.filter(is_agent=True, is_active=True)
     for agent in agents:
         profile, _ = AgentProfile.objects.get_or_create(user=agent)
         if profile.kyc_status != AgentKYCStatus.APPROVED:
             continue
         NotificationService.send_to_user(agent, title, body, data=data)
         NotificationService.create_in_app_notification(agent, title, body, data=data)
+
+
+def _notify_mission_event(user, title, body, event_type, mission_id):
+    """Push FCM + notification in-app pour un événement mission."""
+    if not user:
+        return
+    data = {
+        'type': event_type,
+        'mission_id': str(mission_id),
+    }
+    NotificationService.send_to_user(user, title, body, data=data)
+    NotificationService.create_in_app_notification(user, title, body, data=data)
 
 
 class MissionViewSet(viewsets.ViewSet):
@@ -164,14 +221,14 @@ class MissionViewSet(viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request)
         if page is not None:
-            serializer = MissionDetailSerializer(page, many=True)
+            serializer = MissionDetailSerializer(page, many=True, context={'request': request})
             return Response({
                 'status': 'success',
                 'message': 'Missions récupérées',
                 'data': paginator.get_paginated_response(serializer.data).data
             })
         
-        serializer = MissionDetailSerializer(qs, many=True)
+        serializer = MissionDetailSerializer(qs, many=True, context={'request': request})
         return Response({
             'status': 'success',
             'message': 'Missions récupérées',
@@ -182,7 +239,7 @@ class MissionViewSet(viewsets.ViewSet):
         mission, err = self._get_mission(pk, request.user)
         if err:
             return err
-        return Response(MissionDetailSerializer(mission).data)
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     def create(self, request):
         serializer = MissionCreateSerializer(data=request.data, context={'request': request})
@@ -190,7 +247,15 @@ class MissionViewSet(viewsets.ViewSet):
             mission = serializer.save()
             self._log_event(mission, 'created', request.user)
             _notify_agents_new_mission(mission)
-            return Response(MissionDetailSerializer(mission).data, status=status.HTTP_201_CREATED)
+            try:
+                from apps.missions.tasks import check_pending_mission_alert
+                check_pending_mission_alert.apply_async(
+                    args=[str(mission.id)],
+                    countdown=300,
+                )
+            except Exception:
+                pass
+            return Response(MissionDetailSerializer(mission, context={'request': request}).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     # ------------------------------------------------------------------
@@ -213,11 +278,14 @@ class MissionViewSet(viewsets.ViewSet):
             Q(target_agent_username__isnull=True) | Q(target_agent_username='')
         )
         now = timezone.now()
-        ten_min_ago = now - timedelta(minutes=10)
+        from apps.core.services import PlatformConfigService
+
+        delay_min = PlatformConfigService.agent_mission_delay_minutes()
+        cutoff = now - timedelta(minutes=delay_min)
         has_boost = _agent_has_active_boost(user)
 
-        if not has_boost:
-            qs = qs.filter(created_at__lte=ten_min_ago)
+        if not has_boost and delay_min > 0:
+            qs = qs.filter(created_at__lte=cutoff)
 
         filter_by_zone = str(
             request.query_params.get('filter_by_zone', 'false')
@@ -245,10 +313,10 @@ class MissionViewSet(viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request)
         if page is not None:
-            serializer = MissionDetailSerializer(page, many=True)
+            serializer = MissionDetailSerializer(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = MissionDetailSerializer(qs, many=True)
+        serializer = MissionDetailSerializer(qs, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
@@ -276,10 +344,10 @@ class MissionViewSet(viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request)
         if page is not None:
-            serializer = MissionDetailSerializer(page, many=True)
+            serializer = MissionDetailSerializer(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = MissionDetailSerializer(qs, many=True)
+        serializer = MissionDetailSerializer(qs, many=True, context={'request': request})
         return Response({'results': serializer.data})
 
     @action(detail=False, methods=['get'])
@@ -305,9 +373,9 @@ class MissionViewSet(viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request)
         if page is not None:
-            serializer = MissionDetailSerializer(page, many=True)
+            serializer = MissionDetailSerializer(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
-        serializer = MissionDetailSerializer(qs, many=True)
+        serializer = MissionDetailSerializer(qs, many=True, context={'request': request})
         return Response({'results': serializer.data})
 
     @action(detail=False, methods=['get'])
@@ -318,7 +386,7 @@ class MissionViewSet(viewsets.ViewSet):
             agent=request.user,
             status__in=['COMPLETED', 'CANCELLED'],
         ).order_by('-updated_at')[:limit]
-        return Response({'results': MissionDetailSerializer(qs, many=True).data})
+        return Response({'results': MissionDetailSerializer(qs, many=True, context={'request': request}).data})
 
     @action(detail=False, methods=['get'])
     def disputes(self, request):
@@ -334,7 +402,7 @@ class MissionViewSet(viewsets.ViewSet):
             agent=user,
             status='DISPUTED',
         ).order_by('-updated_at')[:limit]
-        return Response({'results': MissionDetailSerializer(qs, many=True).data})
+        return Response({'results': MissionDetailSerializer(qs, many=True, context={'request': request}).data})
 
     # ------------------------------------------------------------------
     # Custom detail actions
@@ -351,6 +419,17 @@ class MissionViewSet(viewsets.ViewSet):
             return Response(
                 {'message': 'Compte en attente de validation KYC.'},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+        if not _agent_can_accept_more(request.user):
+            capacity = _agent_mission_capacity(request.user)
+            return Response(
+                {
+                    'message': (
+                        f'Limite atteinte : vous ne pouvez pas dépasser '
+                        f'{capacity} mission(s) active(s) simultanément.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
         try:
             with transaction.atomic():
@@ -369,11 +448,21 @@ class MissionViewSet(viewsets.ViewSet):
                         },
                         status=status.HTTP_409_CONFLICT,
                     )
+                reserved_for = (mission.target_agent_username or '').strip()
+                if reserved_for and reserved_for.lower() != (request.user.username or '').lower():
+                    return Response(
+                        {'message': 'Cette mission est réservée à un autre agent.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
                 mission.agent = request.user
                 mission.status = 'ACCEPTED'
-                mission.save(update_fields=['agent', 'status', 'updated_at'])
+                if mission.target_agent_username:
+                    mission.target_agent_username = None
+                mission.save(update_fields=['agent', 'status', 'target_agent_username', 'updated_at'])
                 EscrowService.lock_on_accept(mission)
-                EscrowService.release_purchase_to_agent(mission)
+                # Matériel : libéré uniquement après validation admin (MaterialWithdrawalRequest)
+                if _mission_material_cost(mission) <= 0:
+                    EscrowService.release_purchase_to_agent(mission)
         except Mission.DoesNotExist:
             return Response({'status': 'error', 'message': 'Mission introuvable'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
@@ -384,7 +473,71 @@ class MissionViewSet(viewsets.ViewSet):
 
         self._log_event(mission, 'accepted', request.user)
         send_system_message(mission, f"Mission acceptée par {request.user.username}")
-        return Response(MissionDetailSerializer(mission).data)
+        _notify_mission_event(
+            mission.client,
+            'Mission acceptée',
+            f'Un agent a accepté votre mission « {mission.title[:80]} ».',
+            'MISSION_ACCEPTED',
+            mission.id,
+        )
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='request_material_funds')
+    def request_material_funds(self, request, pk=None):
+        """Demande de déblocage des fonds matériel (validation admin requise)."""
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        if mission.agent != request.user:
+            return Response(
+                {'message': 'Réservé à l\'agent assigné'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if mission.material_released:
+            return Response(
+                {'message': 'Les fonds matériel ont déjà été libérés'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if MaterialWithdrawalRequest.objects.filter(
+            mission=mission,
+            status=MaterialWithdrawalRequest.Status.PENDING,
+        ).exists():
+            return Response(
+                {'message': 'Une demande est déjà en cours de traitement'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_amount = request.data.get('amount')
+        if raw_amount is not None:
+            try:
+                amount = Decimal(str(raw_amount))
+            except (TypeError, ValueError, ArithmeticError):
+                return Response(
+                    {'message': 'Montant invalide'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            amount = mission.material_cost or mission.purchase_amount or Decimal('0')
+
+        if amount <= 0:
+            return Response(
+                {'message': 'Aucun montant matériel défini pour cette mission'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        withdrawal = MaterialWithdrawalRequest.objects.create(
+            mission=mission,
+            amount=amount,
+        )
+        return Response(
+            {
+                'id': withdrawal.id,
+                'status': withdrawal.status,
+                'amount': float(withdrawal.amount),
+                'message': 'Demande envoyée — en attente de validation admin',
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=['post'], url_path='decline_assignment')
     def decline_assignment(self, request, pk=None):
@@ -424,7 +577,7 @@ class MissionViewSet(viewsets.ViewSet):
             mission,
             f"{request.user.username} a refusé la mission assignée",
         )
-        return Response(MissionDetailSerializer(mission).data)
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def start_mission(self, request, pk=None):
@@ -443,20 +596,49 @@ class MissionViewSet(viewsets.ViewSet):
         mission.save(update_fields=['status', 'updated_at'])
         self._log_event(mission, 'in_progress', request.user, request.data)
         send_system_message(mission, "La mission a démarré")
-        return Response(MissionDetailSerializer(mission).data)
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def mark_completed_live(self, request, pk=None):
+        """Agent : clôture live sans photo — passe en IN_PROGRESS_REVIEW."""
         mission, err = self._get_mission(pk, request.user)
         if err:
             return err
         if mission.agent != request.user:
-            return Response({'status': 'error', 'message': 'Non autorisé'}, status=status.HTTP_403_FORBIDDEN)
-        mission.status = 'COMPLETED'
+            return Response(
+                {'status': 'error', 'message': 'Non autorisé'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if mission.status != 'IN_PROGRESS':
+            return Response(
+                {
+                    'message': (
+                        'La mission doit être en cours (IN_PROGRESS) '
+                        'pour être marquée terminée.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        _update_agent_geo(request.user, request.data)
+        mission.status = 'IN_PROGRESS_REVIEW'
         mission.save(update_fields=['status', 'updated_at'])
-        self._log_event(mission, 'completed', request.user)
-        send_system_message(mission, "La mission est terminée")
-        return Response(MissionDetailSerializer(mission).data)
+        self._log_event(mission, 'proofs_uploaded', request.user, request.data)
+        send_system_message(
+            mission,
+            "Mission marquée terminée — en attente de validation client.",
+        )
+        _notify_mission_event(
+            mission.client,
+            'Validation requise',
+            (
+                f'L\'agent a terminé la mission « {mission.title[:80]} ». '
+                'Validez pour libérer les fonds.'
+            ),
+            'MISSION_PROOF_SUBMITTED',
+            mission.id,
+        )
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def update_steps(self, request, pk=None):
@@ -503,7 +685,7 @@ class MissionViewSet(viewsets.ViewSet):
             'IN_PROGRESS': 'La mission est en cours',
         }
         send_system_message(mission, _sys_msgs.get(new_status, new_status))
-        return Response(MissionDetailSerializer(mission).data)
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def submit_completion(self, request, pk=None):
@@ -553,7 +735,17 @@ class MissionViewSet(viewsets.ViewSet):
             mission,
             "L'agent a soumis les preuves — en attente de validation client.",
         )
-        return Response(MissionDetailSerializer(mission).data)
+        _notify_mission_event(
+            mission.client,
+            'Validation requise',
+            (
+                f'L\'agent a terminé la mission « {mission.title[:80]} ». '
+                'Validez la preuve pour libérer les fonds.'
+            ),
+            'MISSION_PROOF_SUBMITTED',
+            mission.id,
+        )
+        return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def validate_completion(self, request, pk=None):
@@ -565,10 +757,24 @@ class MissionViewSet(viewsets.ViewSet):
                 {'status': 'error', 'message': 'Mission non éligible à la validation.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        is_client = mission.client == request.user
         qr_data = request.data.get('qr_code_data', '')
-        if mission.qr_code_token != qr_data:
-            return Response({'status': 'error', 'message': 'QR Code invalide'}, status=status.HTTP_400_BAD_REQUEST)
-        
+        if not is_client:
+            if mission.qr_code_token != qr_data:
+                return Response(
+                    {'status': 'error', 'message': 'QR Code invalide'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif mission.status != 'IN_PROGRESS_REVIEW':
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'En attente de la preuve de complétion de l\'agent.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             EscrowService.release_to_agent(mission)
         except ValueError as e:
@@ -582,7 +788,41 @@ class MissionViewSet(viewsets.ViewSet):
         mission.save(update_fields=['status', 'qr_code_token', 'updated_at'])
         self._log_event(mission, 'validated', request.user)
         send_system_message(mission, "Mission validée — fonds libérés vers l'agent")
-        return Response({'status': 'success', 'message': 'Mission validée et fonds libérés'})
+        return Response({
+            'status': 'success',
+            'message': 'Mission validée et fonds libérés',
+            'data': MissionDetailSerializer(mission, context={'request': request}).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='release_funds')
+    def release_funds(self, request, pk=None):
+        """Alias client : finalise la mission et libère l'escrow."""
+        return self.validate_completion(request, pk=pk)
+
+    @action(detail=True, methods=['post'], url_path='allow_price_negotiation')
+    def allow_price_negotiation(self, request, pk=None):
+        """Le client autorise l'agent à proposer un nouveau tarif."""
+        mission, err = self._get_mission(pk, request.user)
+        if err:
+            return err
+        if mission.client != request.user:
+            return Response(
+                {'status': 'error', 'message': 'Réservé au client'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        allowed = bool(request.data.get('allowed', True))
+        mission.price_negotiation_allowed = allowed
+        mission.save(update_fields=['price_negotiation_allowed', 'updated_at'])
+        msg = (
+            'Le client autorise une proposition de tarif.'
+            if allowed else 'Proposition de tarif désactivée.'
+        )
+        send_system_message(mission, msg)
+        return Response({
+            'status': 'success',
+            'price_negotiation_allowed': allowed,
+            'data': MissionDetailSerializer(mission, context={'request': request}).data,
+        })
 
     @action(detail=True, methods=['post'])
     def open_dispute(self, request, pk=None):
@@ -632,13 +872,17 @@ class MissionViewSet(viewsets.ViewSet):
         compensated_statuses = {'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS'}
         try:
             with transaction.atomic():
-                if mission.status in compensated_statuses and mission.agent_id:
+                if mission.status == 'PENDING' and not mission.agent_id:
+                    mission.target_agent_username = None
+                    if hasattr(mission, 'escrow') and mission.escrow.status == EscrowStatus.HELD:
+                        EscrowService.refund_to_client(mission, reason='Annulation gratuite (en attente)')
+                elif mission.status in compensated_statuses and mission.agent_id:
                     EscrowService.cancel_with_agent_compensation(mission)
                 elif hasattr(mission, 'escrow') and mission.escrow.status == EscrowStatus.HELD:
                     EscrowService.refund_to_client(mission, reason='Annulation mission')
 
                 mission.status = 'CANCELLED'
-                mission.save(update_fields=['status', 'updated_at'])
+                mission.save(update_fields=['status', 'target_agent_username', 'updated_at'])
         except ValueError as e:
             return Response(
                 {'status': 'error', 'message': str(e)},
@@ -650,7 +894,7 @@ class MissionViewSet(viewsets.ViewSet):
         return Response({
             'status': 'success',
             'message': 'Mission annulée',
-            'data': MissionDetailSerializer(mission).data,
+            'data': MissionDetailSerializer(mission, context={'request': request}).data,
         })
 
     @action(detail=True, methods=['post'], url_path='update_negotiated_price')
@@ -907,7 +1151,7 @@ class MissionViewSet(viewsets.ViewSet):
         return Response({
             'status': 'success',
             'message': 'Fonds libérés et mission validée',
-            'data': MissionDetailSerializer(mission).data,
+            'data': MissionDetailSerializer(mission, context={'request': request}).data,
         })
 
     @action(detail=True, methods=['post'])
@@ -971,6 +1215,12 @@ class MissionViewSet(viewsets.ViewSet):
         invoice_number = f"INV-{mission.created_at.strftime('%Y%m%d')}-{str(mission.id)[:8]}"
         response['Content-Disposition'] = f'attachment; filename="facture_{invoice_number}.pdf"'
 
+        from apps.core.services import (
+            FEES_CONFIDENTIAL_KEY,
+            FEES_URGENT_KEY,
+            PlatformConfigService,
+        )
+
         doc = SimpleDocTemplate(
             response, pagesize=letter,
             topMargin=0.5 * inch, bottomMargin=0.5 * inch,
@@ -978,7 +1228,8 @@ class MissionViewSet(viewsets.ViewSet):
         )
         elements = []
         styles = getSampleStyleSheet()
-        option_cost = Decimal('500')
+        urgent_fee = PlatformConfigService.get_decimal(FEES_URGENT_KEY, '500')
+        confidential_fee = PlatformConfigService.get_decimal(FEES_CONFIDENTIAL_KEY, '500')
 
         header_row = Table(
             [[
@@ -1063,13 +1314,13 @@ class MissionViewSet(viewsets.ViewSet):
         table_data.append([desc_label, category_name, f'{float(service_amount):.0f}'])
 
         if mission.is_urgent:
-            table_data.append(['Mission Urgente', 'Option', f'{float(option_cost):.0f}'])
+            table_data.append(['Mission Urgente', 'Option', f'{float(urgent_fee):.0f}'])
         if mission.is_confidential:
-            table_data.append(['Agent Interne Fonaqo', 'Option', f'{float(option_cost):.0f}'])
+            table_data.append(['Agent Interne Fonaqo', 'Option', f'{float(confidential_fee):.0f}'])
 
         platform_fee = Decimal(mission.service_fee or 0)
-        platform_fee -= option_cost if mission.is_urgent else Decimal('0')
-        platform_fee -= option_cost if mission.is_confidential else Decimal('0')
+        platform_fee -= urgent_fee if mission.is_urgent else Decimal('0')
+        platform_fee -= confidential_fee if mission.is_confidential else Decimal('0')
         if platform_fee < 0:
             platform_fee = Decimal('0')
         if platform_fee > 0:
@@ -1387,12 +1638,13 @@ class AgentStatisticsViewSet(viewsets.ModelViewSet):
 
         month_str = request.query_params.get('month') or timezone.now().strftime('%Y-%m')
         try:
+            from datetime import datetime as dt
             year, month = map(int, month_str.split('-'))
-            start_date = timezone.datetime(year, month, 1, tzinfo=timezone.utc)
+            start_date = timezone.make_aware(dt(year, month, 1))
             if month == 12:
-                end_date = timezone.datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                end_date = timezone.make_aware(dt(year + 1, 1, 1))
             else:
-                end_date = timezone.datetime(year, month + 1, 1, tzinfo=timezone.utc)
+                end_date = timezone.make_aware(dt(year, month + 1, 1))
         except (ValueError, IndexError):
             return Response(
                 {'message': 'Format de mois invalide (YYYY-MM)'},

@@ -1,0 +1,46 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Clients{% endblock %}
+{% block content %}
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Clients</h2><p>Comptes clients et parrainage (deep link uniquement — pas de saisie manuelle)</p></div>
+</div>
+
+<div class="fq-stat-grid mb-6" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Total clients</p><p class="fq-stat-value" style="font-size:22px">{{ stats.total }}</p></div>
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Avec parrainage</p><p class="fq-stat-value" style="font-size:22px">{{ stats.with_referral }}</p></div>
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Ce mois</p><p class="fq-stat-value" style="font-size:22px">{{ stats.this_month }}</p></div>
+</div>
+
+<section class="fq-card overflow-hidden">
+  <div class="fq-filters">
+    <input type="search" id="clients-filter" placeholder="Rechercher téléphone, ID…" class="fq-search-field"/>
+  </div>
+  <div class="fq-table-wrap">
+    <table class="fq-table" id="clients-table">
+      <thead><tr><th>ID</th><th>Téléphone</th><th>Email</th><th>Parrainage</th><th>Inscrit le</th><th class="text-right">Actions</th></tr></thead>
+      <tbody>
+        {% for cp in clients %}
+        <tr class="client-row" data-search="{{ cp.user.id }} {{ cp.user.phone_number }} {{ cp.user.email }}"
+            data-row-detail='{"ID":"{{ cp.user.id }}","Téléphone":"{{ cp.user.phone_number|default:"—"|escapejs }}","Email":"{{ cp.user.email|default:"—"|escapejs }}","Username":"{{ cp.user.username|default:"—"|escapejs }}","Parrainage":"{% if cp.influencer %}{{ cp.influencer.code_promo }}{% else %}—{% endif %}","Inscrit le":"{{ cp.created_at|date:"d/m/Y H:i" }}","Actif":"{% if cp.user.is_active %}Oui{% else %}Non{% endif %}"}'>
+          <td class="mono">{{ cp.user.id }}</td>
+          <td class="font-semibold">{{ cp.user.phone_number|default:"—" }}</td>
+          <td class="text-sm">{{ cp.user.email|default:"—" }}</td>
+          <td>{% if cp.influencer %}<span class="fq-badge fq-badge-default" title="Via deep link">{{ cp.influencer.code_promo }}</span>{% else %}<span class="text-[var(--fq-muted)]">—</span>{% endif %}</td>
+          <td class="mono text-xs">{{ cp.created_at|date:"d/m/Y H:i" }}</td>
+          <td class="text-right space-x-1">
+            <button type="button" data-admin-action="view-row-detail" class="fq-btn fq-btn-ghost fq-btn-sm" title="Voir détails">{% include "super_admin/partials/icon.html" with name="eye" class="w-4 h-4" %}</button>
+            {% if cp.user.is_active %}
+            <button type="button" data-admin-action="suspend-user" data-user-id="{{ cp.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-red-600">Suspendre</button>
+            {% else %}
+            <button type="button" data-admin-action="reactivate-user" data-user-id="{{ cp.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-green-700">Réactiver</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="fq-empty">Aucun client.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% comment %}StatCard — label, kpi_key, icon (optional), trend (optional: up/down/neutral), trend_val{% endcomment %}
+<div class="fq-stat-card" data-stat="{{ kpi_key }}">
+  <div class="fq-stat-top">
+    <div class="fq-stat-icon {{ icon_class|default:'' }}">
+      {% if icon %}{% include "super_admin/partials/icon.html" with name=icon class="w-5 h-5" %}{% endif %}
+    </div>
+    {% if trend_val %}<span class="fq-stat-trend {{ trend|default:'neutral' }}">{{ trend_val }}</span>{% endif %}
+  </div>
+  <div>
+    <p class="fq-stat-label">{{ label }}</p>
+    <p class="fq-stat-value" data-kpi="{{ kpi_key }}">
+      <span class="fq-skeleton inline-block w-20 h-7"></span>
+    </p>
+  </div>
+  <div class="fq-sparkline" data-sparkline="{{ kpi_key }}" aria-hidden="true">
+    <span style="height:40%"></span><span style="height:65%"></span><span style="height:45%"></span>
+    <span style="height:80%"></span><span style="height:55%"></span><span style="height:90%"></span><span style="height:70%"></span>
+  </div>
+</div>

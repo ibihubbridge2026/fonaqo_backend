@@ -1,0 +1,48 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Influenceurs{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Influenceurs</h2><p>Codes promo, deep links et commissions</p></div>
+  <button type="button" data-admin-action="create-influencer" class="fq-btn fq-btn-primary fq-btn-sm">+ Nouvel influenceur</button>
+</div>
+
+<section class="fq-card overflow-hidden mb-6">
+  <div class="fq-table-wrap custom-scrollbar">
+    <table class="fq-table">
+      <thead>
+        <tr><th>Nom</th><th>Code promo</th><th>Deep link</th><th>Commission</th><th>Solde</th><th>Contrat</th><th class="text-right">Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for inf in influencers %}
+        <tr>
+          <td class="font-semibold">{{ inf.name }}</td>
+          <td class="mono font-bold">{{ inf.code_promo }}</td>
+          <td><code class="text-xs bg-[var(--fq-bg)] px-2 py-1 rounded-lg mono">fonaco.app/join/{{ inf.referral_slug|default:inf.code_promo }}</code></td>
+          <td class="mono">{% widthratio inf.commission_rate 0.01 1 %}%</td>
+          <td class="mono font-bold">{{ inf.earnings_balance|floatformat:0 }} FCFA</td>
+          <td class="text-xs">{{ inf.duration_years }} an{{ inf.duration_years|pluralize }}</td>
+          <td class="text-right space-x-1">
+            <button type="button" data-admin-action="edit-influencer" data-influencer-id="{{ inf.id }}" data-influencer-name="{{ inf.name }}" data-influencer-code="{{ inf.code_promo }}" data-influencer-slug="{{ inf.referral_slug|default:'' }}" data-commission-rate="{{ inf.commission_rate }}" data-duration-years="{{ inf.duration_years }}" class="fq-btn fq-btn-ghost fq-btn-sm">Éditer</button>
+            <a href="{% url 'admin-influencer-detail' inf.id %}" class="fq-btn fq-btn-primary fq-btn-sm">Voir plus</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7"><div class="fq-empty">Aucun influenceur.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="fq-card fq-card-padded border-2 border-dashed border-[var(--fq-yellow)] bg-[var(--fq-yellow-soft)]">
+  <h3 class="fq-section-title mb-4">Création rapide</h3>
+  <form id="form-influencer-quick" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <input name="name" required placeholder="Nom influenceur" class="fq-input"/>
+    <input name="code_promo" required placeholder="Code promo" class="fq-input"/>
+    <input name="referral_slug" placeholder="Slug deep link" class="fq-input"/>
+    <input name="commission_rate" type="number" step="0.01" value="0.02" placeholder="Taux (ex: 0.02)" class="fq-input"/>
+    <button type="submit" class="fq-btn fq-btn-primary md:col-span-4">Enregistrer</button>
+  </form>
+</div>
+{% endblock %}

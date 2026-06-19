@@ -1,12 +1,62 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 
 from apps.core.choices import EscrowStatus, TransactionStatus
 from apps.wallets.models import Transaction, Wallet
 
-from .models import Escrow
+from .models import Escrow, EscrowSplitRecord
+
+User = get_user_model()
+PLATFORM_COMMISSION_RATE = Decimal('0.10')
+PLATFORM_USER_EMAIL = 'platform@fonaqo.system'
+INFLUENCER_DEFAULT_RATE = Decimal('0.02')
+
+
+def _mission_labor_cost(mission) -> Decimal:
+    if getattr(mission, 'labor_cost', None) and mission.labor_cost > 0:
+        return Decimal(mission.labor_cost)
+    if getattr(mission, 'service_amount', None) and mission.service_amount > 0:
+        return Decimal(mission.service_amount)
+    return Decimal(mission.price or 0)
+
+
+def _mission_material_cost(mission) -> Decimal:
+    if getattr(mission, 'material_cost', None) and mission.material_cost > 0:
+        return Decimal(mission.material_cost)
+    return Decimal(mission.purchase_amount or 0)
+
+
+def _get_active_client_influencer(client):
+    from apps.accounts.models import ClientProfile
+    try:
+        profile = client.client_profile
+    except ClientProfile.DoesNotExist:
+        return None
+    return profile.active_influencer
+
+
+def _get_platform_wallet():
+    """Portefeuille système FONACO pour les commissions plateforme."""
+    platform_user, created = User.objects.get_or_create(
+        email=PLATFORM_USER_EMAIL,
+        defaults={
+            'username': 'fonaqo_platform',
+            'phone_number': '+2299999990001',
+            'is_staff': True,
+            'is_active': True,
+            'is_client': False,
+            'is_agent': False,
+            'is_verified': True,
+        },
+    )
+    if created:
+        platform_user.set_unusable_password()
+        platform_user.save(update_fields=['password'])
+    wallet, _ = Wallet.objects.get_or_create(user=platform_user)
+    return wallet
 
 
 class EscrowService:
@@ -14,6 +64,10 @@ class EscrowService:
 
     @staticmethod
     def escrow_amount(mission) -> Decimal:
+        labor = _mission_labor_cost(mission)
+        material = _mission_material_cost(mission)
+        if labor > 0 or material > 0:
+            return labor + material + Decimal(mission.service_fee or 0)
         service = (
             mission.service_amount
             if mission.service_amount and mission.service_amount > 0
@@ -139,10 +193,42 @@ class EscrowService:
         if client_wallet.escrow_balance < escrow.amount:
             raise ValueError("Solde séquestre client insuffisant")
 
-        client_wallet.escrow_balance -= escrow.amount
+        gross = Decimal(escrow.amount).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        commission = (gross * PLATFORM_COMMISSION_RATE).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP,
+        )
+        net_agent = gross - commission
+
+        influencer = _get_active_client_influencer(mission.client)
+        influencer_share = Decimal('0')
+        platform_share = commission
+        if influencer:
+            rate = Decimal(str(influencer.commission_rate or INFLUENCER_DEFAULT_RATE))
+            influencer_share = (gross * rate).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP,
+            )
+            platform_share = commission - influencer_share
+            if platform_share < 0:
+                platform_share = Decimal('0')
+
+        client_wallet.escrow_balance -= gross
         client_wallet.save(update_fields=["escrow_balance", "updated_at"])
-        agent_wallet.balance += escrow.amount
+
+        agent_wallet.balance += net_agent
         agent_wallet.save(update_fields=["balance", "updated_at"])
+
+        platform_wallet = Wallet.objects.select_for_update().get(
+            pk=_get_platform_wallet().pk,
+        )
+        platform_user = platform_wallet.user
+        platform_wallet.balance += platform_share
+        platform_wallet.save(update_fields=["balance", "updated_at"])
+
+        if influencer and influencer_share > 0:
+            from apps.accounts.models import Influencer
+            inf = Influencer.objects.select_for_update().get(pk=influencer.pk)
+            inf.earnings_balance += influencer_share.quantize(Decimal('1'))
+            inf.save(update_fields=['earnings_balance'])
 
         escrow.status = EscrowStatus.RELEASED
         escrow.released_at = timezone.now()
@@ -151,12 +237,104 @@ class EscrowService:
         Transaction.objects.create(
             wallet=agent_wallet,
             mission=mission,
-            amount=escrow.amount,
+            amount=net_agent,
             transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
             status=TransactionStatus.COMPLETED,
-            description=f"Libération séquestre mission {mission.id}",
+            description=(
+                f"Libération séquestre mission {mission.id} "
+                f"(net 90 % après commission 10 %)"
+            ),
         )
+        Transaction.objects.create(
+            wallet=platform_wallet,
+            mission=mission,
+            amount=platform_share,
+            transaction_type=Transaction.TransactionType.INSURANCE_FEE,
+            status=TransactionStatus.COMPLETED,
+            description=f"Commission FONACO {platform_share} mission {mission.id}",
+        )
+
+        EscrowSplitRecord.objects.create(
+            mission=mission,
+            beneficiary_type=EscrowSplitRecord.BeneficiaryType.AGENT,
+            amount_fcfa=net_agent,
+            beneficiary_user=mission.agent,
+        )
+        if platform_share > 0:
+            EscrowSplitRecord.objects.create(
+                mission=mission,
+                beneficiary_type=EscrowSplitRecord.BeneficiaryType.PLATFORM,
+                amount_fcfa=platform_share,
+                beneficiary_user=platform_user,
+            )
+        if influencer and influencer_share > 0:
+            EscrowSplitRecord.objects.create(
+                mission=mission,
+                beneficiary_type=EscrowSplitRecord.BeneficiaryType.INFLUENCER,
+                amount_fcfa=influencer_share,
+                influencer=influencer,
+            )
+
         return escrow
+
+    @staticmethod
+    @transaction.atomic
+    def release_material_to_agent(mission, amount: Decimal | None = None) -> None:
+        """Libère le montant matériel du séquestre vers l'agent (validation admin)."""
+        if not mission.agent:
+            raise ValueError("Aucun agent assigné à cette mission")
+        if mission.material_released:
+            return
+
+        material = amount or _mission_material_cost(mission)
+        material = Decimal(material).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if material <= 0:
+            return
+
+        try:
+            escrow = Escrow.objects.select_for_update().get(mission=mission)
+        except Escrow.DoesNotExist:
+            raise ValueError("Aucun séquestre trouvé pour cette mission")
+
+        if escrow.status != EscrowStatus.HELD:
+            raise ValueError("Le séquestre n'est pas en état de libération matériel")
+
+        client_wallet = Wallet.objects.select_for_update().get(user=mission.client)
+        agent_wallet = Wallet.objects.select_for_update().get(user=mission.agent)
+
+        if client_wallet.escrow_balance < material:
+            raise ValueError("Solde séquestre insuffisant pour le matériel")
+        if escrow.amount < material:
+            raise ValueError("Montant matériel supérieur au séquestre")
+
+        client_wallet.escrow_balance -= material
+        client_wallet.save(update_fields=["escrow_balance", "updated_at"])
+        agent_wallet.balance += material
+        agent_wallet.save(update_fields=["balance", "updated_at"])
+
+        escrow.amount -= material
+        escrow.save(update_fields=["amount"])
+
+        mission.material_released = True
+        mission.purchase_released = True
+        mission.save(update_fields=["material_released", "purchase_released", "updated_at"])
+
+        Transaction.objects.create(
+            wallet=agent_wallet,
+            mission=mission,
+            amount=material,
+            transaction_type=Transaction.TransactionType.TRANSFER,
+            status=TransactionStatus.COMPLETED,
+            description=f"Déblocage matériel mission {mission.id}",
+        )
+        Transaction.objects.create(
+            wallet=client_wallet,
+            mission=mission,
+            amount=-material,
+            transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
+            status=TransactionStatus.COMPLETED,
+            description=f"Sortie séquestre matériel mission {mission.id}",
+        )
 
     @staticmethod
     @transaction.atomic

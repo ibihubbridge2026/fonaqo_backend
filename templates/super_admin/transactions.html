@@ -1,0 +1,63 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Transactions</h2>
+    <p>Litiges escrow, demandes de retrait et résolution</p>
+  </div>
+  <div class="flex gap-2">
+    <button type="button" data-admin-action="refresh-payouts" class="fq-btn fq-btn-secondary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Retraits</button>
+    <button type="button" data-admin-action="refresh-escrow" class="fq-btn fq-btn-primary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Litiges</button>
+  </div>
+</div>
+
+<div class="fq-stat-grid mb-6" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Retraits en attente</p><p class="fq-stat-value" style="font-size:22px" data-kpi="payouts_pending"><span class="fq-skeleton inline-block w-8 h-6"></span></p></div>
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Litiges ouverts</p><p class="fq-stat-value" style="font-size:22px" data-kpi="disputes_open"><span class="fq-skeleton inline-block w-8 h-6"></span></p></div>
+</div>
+
+<section class="fq-card overflow-hidden mb-6">
+  <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Demandes de retrait</h3></div>
+  <div class="fq-table-wrap custom-scrollbar">
+    <table class="fq-table" id="payouts-table">
+      <thead><tr><th>ID</th><th>Agent</th><th class="text-right">Montant</th><th>Statut</th><th class="text-right">Actions</th></tr></thead>
+      <tbody id="payouts-tbody">
+        <tr><td colspan="5" class="text-center py-8"><span class="fq-skeleton inline-block w-40 h-5"></span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="flex flex-col lg:flex-row gap-6 min-h-[50vh]">
+  <section class="flex-1 fq-card overflow-hidden">
+    <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Litiges escrow</h3></div>
+    <div class="fq-table-wrap custom-scrollbar">
+      <table class="fq-table" id="escrow-table">
+        <thead><tr><th>Mission</th><th>Client</th><th>Agent</th><th>Montant</th><th>Escrow</th></tr></thead>
+        <tbody id="escrow-tbody">
+          <tr><td colspan="5" class="text-center py-10"><span class="fq-skeleton inline-block w-48 h-5"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="w-full lg:w-[380px] fq-card flex flex-col" id="dispute-panel">
+    <div class="p-6 border-b border-[var(--fq-border-light)]">
+      <h3 class="fq-section-title">Résolution litige</h3>
+      <p class="text-xs text-[var(--fq-muted)] mt-1" id="dispute-panel-subtitle">Sélectionnez une mission DISPUTED</p>
+    </div>
+    <div class="flex-1 p-4 overflow-y-auto text-sm bg-[var(--fq-bg)] min-h-[160px]" id="dispute-evidence">
+      <p class="text-[var(--fq-muted)] text-center py-8">Aucun litige sélectionné</p>
+    </div>
+    <div class="p-4 border-t space-y-2">
+      <input type="hidden" id="active-dispute-id" value=""/>
+      <button type="button" data-admin-action="dispute-resolve" data-resolution="REFUND_CLIENT" class="fq-btn fq-btn-secondary w-full fq-btn-sm">{% include "super_admin/partials/icon.html" with name="replay" class="w-4 h-4" %} Rembourser client</button>
+      <button type="button" data-admin-action="dispute-resolve" data-resolution="PAY_AGENT" class="fq-btn fq-btn-primary w-full fq-btn-sm">{% include "super_admin/partials/icon.html" with name="payments" class="w-4 h-4" %} Payer agent</button>
+      <button type="button" data-admin-action="open-arbitrage" class="fq-btn fq-btn-ghost w-full fq-btn-sm border border-[var(--fq-border)]">{% include "super_admin/partials/icon.html" with name="balance" class="w-4 h-4" %} Arbitrage personnalisé</button>
+      <p class="text-center text-[10px] text-[var(--fq-muted)] uppercase font-bold pt-1">Action irréversible</p>
+    </div>
+  </section>
+</div>
+{% endblock %}

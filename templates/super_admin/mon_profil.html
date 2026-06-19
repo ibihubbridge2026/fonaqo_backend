@@ -1,0 +1,61 @@
+{% extends use_influencer_layout|yesno:"super_admin/base_influencer_portal.html,super_admin/base_admin.html" %}
+{% block title %}Mon profil{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Mon profil</h2>
+    <p>Modifier vos informations et votre mot de passe</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-6 max-w-5xl">
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-4">Informations</h3>
+    <form id="form-staff-profile" class="space-y-4">
+      <div><label class="fq-label">Identifiant</label><input id="staff-profile-username" type="text" class="fq-input mt-1 mono" readonly disabled/></div>
+      <div><label class="fq-label">Rôle</label><input id="staff-profile-role" type="text" class="fq-input mt-1" readonly disabled/></div>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="fq-label">Prénom</label><input id="staff-profile-first-name" class="fq-input mt-1"/></div>
+        <div><label class="fq-label">Nom</label><input id="staff-profile-last-name" class="fq-input mt-1"/></div>
+      </div>
+      <div><label class="fq-label">Email</label><input id="staff-profile-email" type="email" class="fq-input mt-1"/></div>
+      <button type="submit" class="fq-btn fq-btn-primary">Enregistrer</button>
+    </form>
+  </div>
+
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-4">Mot de passe</h3>
+    <form id="form-staff-password" class="space-y-4">
+      <div><label class="fq-label">Mot de passe actuel</label>
+        <div class="fq-password-wrap">
+          <input id="staff-password-old" type="password" required class="fq-input mt-1 fq-password-field" autocomplete="current-password"/>
+          <button type="button" class="fq-password-toggle" data-password-toggle="staff-password-old" aria-label="Afficher le mot de passe">
+            <svg class="fq-eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="fq-eye-closed hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a21.77 21.77 0 015.06-6.94M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a21.8 21.8 0 01-5.06 6.94"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+      </div>
+      <div><label class="fq-label">Nouveau mot de passe</label>
+        <div class="fq-password-wrap">
+          <input id="staff-password-new" type="password" required class="fq-input mt-1 fq-password-field" autocomplete="new-password"/>
+          <button type="button" class="fq-password-toggle" data-password-toggle="staff-password-new" aria-label="Afficher le mot de passe">
+            <svg class="fq-eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="fq-eye-closed hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a21.77 21.77 0 015.06-6.94M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a21.8 21.8 0 01-5.06 6.94"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+      </div>
+      <div><label class="fq-label">Confirmer</label>
+        <div class="fq-password-wrap">
+          <input id="staff-password-confirm" type="password" required class="fq-input mt-1 fq-password-field" autocomplete="new-password"/>
+          <button type="button" class="fq-password-toggle" data-password-toggle="staff-password-confirm" aria-label="Afficher le mot de passe">
+            <svg class="fq-eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="fq-eye-closed hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a21.77 21.77 0 015.06-6.94M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a21.8 21.8 0 01-5.06 6.94"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+      </div>
+      <button type="submit" class="fq-btn fq-btn-primary">Changer le mot de passe</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

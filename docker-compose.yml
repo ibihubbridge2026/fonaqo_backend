@@ -32,12 +32,14 @@ services:
   web:
     build: .
     # Utilisation de python -m daphne pour éviter l'erreur 'command not found'
-    command: sh -c "python manage.py migrate && python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application"
     env_file:
       - .env
     environment:
       - DATABASE_URL=postgis://fonaqo:change-me@db:5432/fonaqo_db
       - REDIS_URL=redis://redis:6379/0
+      - EMAIL_HOST=maildev
+      - EMAIL_PORT=1025
     volumes:
       - .:/app
     ports:
@@ -49,6 +51,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      maildev:
+        condition: service_started
+
+  maildev:
+    image: maildev/maildev:2.1.0
+    expose:
+      - "1025"
+      - "1080"
+    networks:
+      - fonaqo_network
 
   worker:
     build: .

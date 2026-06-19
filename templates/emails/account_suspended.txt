@@ -1,0 +1,1 @@
+Compte suspendu — {{ user.first_name|default:user.username }}. Contactez le support FONACO.

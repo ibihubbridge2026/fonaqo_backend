@@ -5,14 +5,14 @@ from apps.core.seed import DEFAULT_PASSWORD, run_seed
 
 
 class Command(BaseCommand):
-    help = "Charge les données de démonstration FONAQO (utilisateurs, agents, missions, catégories)."
+    help = "Enregistre le compte SuperAdmin unique (option --flush pour vider la base avant)."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "password",
             nargs="?",
             default=DEFAULT_PASSWORD,
-            help="Mot de passe commun des comptes de test (défaut: password123)",
+            help="Mot de passe admin (défaut: Fonaco2026!)",
         )
         parser.add_argument(
             "--flush",
@@ -28,4 +28,4 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS("Base vidée."))
 
         run_seed(password=password, stdout=self.stdout)
-        self.stdout.write(self.style.SUCCESS("Seed terminé avec succès."))
+        self.stdout.write(self.style.SUCCESS("Admin enregistré avec succès."))

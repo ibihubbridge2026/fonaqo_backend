@@ -1,7 +1,26 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import User
+from .models import User, Influencer, ClientProfile, AgentProfile
+
+
+@admin.register(Influencer)
+class InfluencerAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code_promo', 'commission_rate', 'duration_years', 'earnings_balance', 'created_at')
+    search_fields = ('name', 'code_promo')
+
+
+@admin.register(ClientProfile)
+class ClientProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'influencer', 'influencer_linked_at', 'created_at')
+    search_fields = ('user__email', 'user__phone_number', 'influencer__code_promo')
+
+
+@admin.register(AgentProfile)
+class AgentProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'kyc_status', 'updated_at')
+    list_filter = ('kyc_status',)
+
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):

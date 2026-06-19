@@ -49,12 +49,26 @@ def _agent_rating(user):
 
 
 def _agent_to_artisan_dict(user, request=None):
+    from apps.accounts.badges import compute_agent_badge
+    from apps.accounts.models import AgentProfile
+    from apps.boosts.models import AgentBoost
+
     completed = Mission.objects.filter(
         agent=user,
         status=MissionStatus.COMPLETED,
     ).count()
     joined = user.date_joined
     years = max(0, timezone.now().year - joined.year) if joined else 0
+    profile, _ = AgentProfile.objects.get_or_create(user=user)
+    now = timezone.now()
+    has_boost = AgentBoost.objects.filter(
+        agent=user, status='active', expires_at__gt=now,
+    ).exists()
+    reviews = Mission.objects.filter(
+        agent=user,
+        status=MissionStatus.COMPLETED,
+        client_rating__isnull=False,
+    ).order_by('-updated_at')[:20]
 
     return {
         "id": str(user.id),
@@ -62,7 +76,8 @@ def _agent_to_artisan_dict(user, request=None):
         "last_name": user.last_name or "",
         "avatar_url": _agent_avatar_url(user, request),
         "specialty": _agent_specialty(user),
-        "biography": "",
+        "biography": profile.bio or "",
+        "bio": profile.bio or "",
         "years_of_experience": years,
         "city": user.city or "",
         "district": user.address or "",
@@ -70,9 +85,24 @@ def _agent_to_artisan_dict(user, request=None):
         "email": user.email or "",
         "rating": _agent_rating(user),
         "completed_missions": completed,
+        "badge": compute_agent_badge(completed),
         "certified": user.is_verified,
         "premium": bool(user.level_id),
+        "is_boosted": has_boost,
+        "service_domain": user.service_domain or "",
         "gallery": [],
+        "reviews": [
+            {
+                "rating": m.client_rating,
+                "comment": m.client_comment or "",
+                "client_name": (
+                    f"{m.client.first_name} {m.client.last_name}".strip()
+                    or m.client.username
+                ),
+                "created_at": m.updated_at.isoformat() if m.updated_at else None,
+            }
+            for m in reviews
+        ],
     }
 
 
@@ -80,14 +110,60 @@ def _verified_agents_queryset():
     return User.objects.filter(is_agent=True, is_verified=True)
 
 
+def _listing_to_artisan_dict(listing, request=None):
+  photo_url = listing.photo.url if listing.photo else None
+  if request and photo_url and not photo_url.startswith('http'):
+    photo_url = request.build_absolute_uri(photo_url)
+  return {
+    'id': str(listing.id),
+    'first_name': listing.name.split(' ')[0] if listing.name else '',
+    'last_name': ' '.join(listing.name.split(' ')[1:]) if listing.name else '',
+    'name': listing.name,
+    'avatar_url': photo_url,
+    'specialty': listing.specialty or listing.get_category_display(),
+    'biography': listing.description or '',
+    'bio': listing.description or '',
+    'city': listing.city or '',
+    'district': listing.district or '',
+    'phone': listing.phone or '',
+    'email': listing.email or '',
+    'rating': float(listing.rating or 0),
+    'certified': listing.is_featured,
+    'source': 'leboncoin',
+  }
+
+
+def _agent_suggestion_priority(user, now=None):
+    """Score de priorité : interne et boost actif en tête."""
+    from apps.accounts.models import AgentProfile
+    from apps.boosts.models import AgentBoost
+
+    if now is None:
+        now = timezone.now()
+    profile = AgentProfile.objects.filter(user=user).first()
+    score = 0
+    if profile and profile.is_internal:
+        score += 100
+    if AgentBoost.objects.filter(agent=user, status='active', expires_at__gt=now).exists():
+        score += 50
+    if user.is_verified:
+        score += 10
+    return score
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_artisans_list_view(request):
     """
-    Annuaire public des artisans (agents vérifiés).
+    Annuaire public des artisans experts (LeBonCoin — LocalListing).
     Filtres optionnels: query, specialty, location.
     """
-    qs = _verified_agents_queryset()
+    from apps.leboncoin.models import LocalListing
+
+    qs = LocalListing.objects.filter(
+        category=LocalListing.Category.ARTISAN,
+        is_active=True,
+    )
 
     query = (request.GET.get('query') or '').strip()
     specialty = (request.GET.get('specialty') or '').strip()
@@ -95,28 +171,27 @@ def public_artisans_list_view(request):
 
     if specialty:
         qs = qs.filter(
-            Q(offered_services__category__name__icontains=specialty)
-            | Q(offered_services__title__icontains=specialty),
-            offered_services__is_active=True,
-        ).distinct()
+            Q(specialty__icontains=specialty) | Q(description__icontains=specialty),
+        )
 
     if location:
         qs = qs.filter(
-            Q(city__icontains=location) | Q(address__icontains=location)
+            Q(city__icontains=location) | Q(district__icontains=location) | Q(address__icontains=location),
         )
 
     if query:
         qs = qs.filter(
-            Q(first_name__icontains=query)
-            | Q(last_name__icontains=query)
-            | Q(username__icontains=query)
+            Q(name__icontains=query)
+            | Q(specialty__icontains=query)
             | Q(city__icontains=query)
-            | Q(address__icontains=query)
-            | Q(offered_services__category__name__icontains=query)
-            | Q(offered_services__title__icontains=query)
-        ).distinct()
+            | Q(district__icontains=query)
+            | Q(description__icontains=query),
+        )
 
-    rows = [_agent_to_artisan_dict(user, request) for user in qs.order_by('-reliability_score', '-date_joined')]
+    rows = [
+        _listing_to_artisan_dict(listing, request)
+        for listing in qs.order_by('-is_featured', '-rating', 'name')
+    ]
 
     return JsonResponse(
         {
@@ -131,9 +206,15 @@ def public_artisans_list_view(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_artisan_detail_view(request, artisan_id):
-    """Détail public d'un artisan (agent vérifié) par identifiant."""
-    user = _verified_agents_queryset().filter(pk=artisan_id).first()
-    if user is None:
+    """Détail public d'un artisan LeBonCoin par identifiant."""
+    from apps.leboncoin.models import LocalListing
+
+    listing = LocalListing.objects.filter(
+        pk=artisan_id,
+        category=LocalListing.Category.ARTISAN,
+        is_active=True,
+    ).first()
+    if listing is None:
         return JsonResponse(
             {
                 "status": "error",
@@ -147,7 +228,7 @@ def public_artisan_detail_view(request, artisan_id):
         {
             "status": "success",
             "message": "Artisan public",
-            "data": _agent_to_artisan_dict(user, request),
+            "data": _listing_to_artisan_dict(listing, request),
         },
         status=status.HTTP_200_OK,
     )
@@ -184,10 +265,25 @@ def login_view(request):
             }
         }, status=status.HTTP_200_OK)
     
+    errors = serializer.errors
+    code = errors.get('code')
+    if isinstance(code, list):
+        code = code[0] if code else None
+    detail = errors.get('detail')
+    if isinstance(detail, list):
+        detail = detail[0] if detail else None
+    if str(code) == 'ACCOUNT_SUSPENDED':
+        return JsonResponse({
+            'status': 'error',
+            'message': detail or 'Compte suspendu',
+            'code': 'ACCOUNT_SUSPENDED',
+            'data': {},
+        }, status=status.HTTP_403_FORBIDDEN)
+
     return JsonResponse({
         'status': 'error',
         'message': 'Erreur de connexion',
-        'data': serializer.errors
+        'data': errors,
     }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -276,25 +372,52 @@ def register_view(request):
 @permission_classes([AllowAny])
 def forgot_password_view(request):
     """
-    Vue pour le mot de passe oublié
-    Attend: email
-    Retourne: status, message, data: {}
+    Mot de passe oublié — email (message info) ou téléphone (demande staff PENDING).
     """
-    email = request.data.get('email')
-    
-    if not email:
+    from apps.core.models import PasswordResetRequest
+
+    email = (request.data.get('email') or '').strip()
+    phone = (request.data.get('phone_number') or request.data.get('phone') or '').strip()
+
+    if phone:
+        user = User.objects.filter(phone_number=phone).first()
+        if not user:
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Si ce numéro est enregistré, une demande a été créée.',
+                'data': {},
+            }, status=status.HTTP_200_OK)
+
+        existing = PasswordResetRequest.objects.filter(
+            user=user, status=PasswordResetRequest.Status.PENDING,
+        ).exists()
+        if not existing:
+            PasswordResetRequest.objects.create(user=user, phone_number=phone)
+
+        return JsonResponse({
+            'status': 'success',
+            'message': (
+                'Demande enregistrée. Un administrateur FONACO vous contactera '
+                'avec un mot de passe temporaire.'
+            ),
+            'data': {'method': 'phone'},
+        }, status=status.HTTP_200_OK)
+
+    if email:
         return JsonResponse({
             'status': 'error',
-            'message': 'L\'adresse email est requise',
-            'data': {}
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # TODO: Intégrer un vrai service d'envoi d'emails (SendGrid, Mailjet...)
+            'message': (
+                'Réinitialisation par email bientôt disponible. '
+                'Utilisez l\'onglet Numéro ou contactez le support.'
+            ),
+            'data': {},
+        }, status=status.HTTP_501_NOT_IMPLEMENTED)
+
     return JsonResponse({
         'status': 'error',
-        'message': 'La réinitialisation par email n\'est pas encore disponible. Contactez le support.',
-        'data': {}
-    }, status=status.HTTP_501_NOT_IMPLEMENTED)
+        'message': 'Numéro de téléphone ou email requis',
+        'data': {},
+    }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -483,7 +606,7 @@ def profile_view(request):
     user = request.user
     
     if request.method == 'GET':
-        serializer = UserSerializer(user)
+        serializer = UserSerializer(user, context={'request': request})
         return JsonResponse({
             'status': 'success',
             'message': 'Profil récupéré avec succès',
@@ -491,23 +614,31 @@ def profile_view(request):
         }, status=status.HTTP_200_OK)
     
     elif request.method == 'PATCH':
-        serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
-        if serializer.is_valid():
-            updated_user = serializer.save()
-            
-            # Retourner les données complètes mises à jour
-            user_serializer = UserSerializer(updated_user)
+        try:
+            serializer = ProfileUpdateSerializer(
+                user, data=request.data, partial=True, context={'request': request},
+            )
+            if serializer.is_valid():
+                updated_user = serializer.save()
+                user_serializer = UserSerializer(updated_user, context={'request': request})
+                return JsonResponse({
+                    'status': 'success',
+                    'message': 'Profil mis à jour avec succès',
+                    'data': user_serializer.data
+                }, status=status.HTTP_200_OK)
+
             return JsonResponse({
-                'status': 'success',
-                'message': 'Profil mis à jour avec succès',
-                'data': user_serializer.data
-            }, status=status.HTTP_200_OK)
-        
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Erreur lors de la mise à jour du profil',
-            'data': serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+                'status': 'error',
+                'message': 'Erreur lors de la mise à jour du profil',
+                'data': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('Erreur mise à jour profil user=%s', user.id)
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Erreur serveur: {exc}',
+                'data': {},
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -548,22 +679,33 @@ def agent_suggestions_view(request):
                 if distance <= RADIUS_KM:
                     agents_with_distance.append((agent, distance))
 
-            agents_with_distance.sort(key=lambda x: x[1])
+            agents_with_distance.sort(key=lambda x: (-_agent_suggestion_priority(x[0]), x[1]))
             qs = [agent for agent, _ in agents_with_distance[:limit]]
 
             if not qs:
-                qs = list(base_qs.order_by('-date_joined')[:limit])
+                fallback = list(base_qs.order_by('-date_joined')[:limit * 2])
+                fallback.sort(key=lambda u: (-_agent_suggestion_priority(u), u.date_joined), reverse=True)
+                qs = fallback[:limit]
 
         except (ValueError, TypeError):
-            qs = list(base_qs.order_by('-date_joined')[:limit])
+            fallback = list(base_qs.order_by('-date_joined')[:limit * 2])
+            fallback.sort(key=lambda u: (-_agent_suggestion_priority(u), u.date_joined), reverse=True)
+            qs = fallback[:limit]
     else:
-        qs = list(base_qs.order_by('-date_joined')[:limit])
+        fallback = list(base_qs.order_by('-date_joined')[:limit * 2])
+        fallback.sort(key=lambda u: (-_agent_suggestion_priority(u), u.date_joined), reverse=True)
+        qs = fallback[:limit]
     
-    # Fallback : si aucun agent vérifié, renvoyer les agents non vérifiés
+    # Fallback : si aucun agent, renvoyer les agents non vérifiés
     if not qs:
-        qs = User.objects.filter(is_agent=True).order_by("-date_joined")[:limit]
+        fallback = list(User.objects.filter(is_agent=True).order_by("-date_joined")[:limit * 2])
+        fallback.sort(key=lambda u: (-_agent_suggestion_priority(u), u.date_joined), reverse=True)
+        qs = fallback[:limit]
     
     rows = []
+    from apps.accounts.models import AgentProfile
+    from apps.boosts.models import AgentBoost
+    now = timezone.now()
     for u in qs:
         svc = u.offered_services.filter(is_active=True).first()
         specialty = ""
@@ -589,6 +731,11 @@ def agent_suggestions_view(request):
             .values_list("category__name", flat=True)
             .distinct()[:5]
         )
+        profile = AgentProfile.objects.filter(user=u).first()
+        is_internal = bool(profile and profile.is_internal)
+        is_boosted = AgentBoost.objects.filter(
+            agent=u, status='active', expires_at__gt=now,
+        ).exists()
 
         rows.append(
             {
@@ -599,6 +746,10 @@ def agent_suggestions_view(request):
                 "specialty": specialty or "Agent terrain",
                 "expertise_tags": expertise_tags,
                 "is_verified": u.is_verified,
+                "is_internal": is_internal,
+                "is_boosted": is_boosted,
+                "is_priority": is_internal or is_boosted,
+                "agent_code": profile.agent_code if profile else "",
                 "is_online": u.is_online,
                 "is_available": u.is_online and u.is_agent,
                 "avatar_url": avatar_url,
@@ -689,6 +840,8 @@ def nearby_agents_view(request):
             qs = list(base_qs.order_by('-reliability_score', '-is_online')[:limit])
 
         rows = []
+        from apps.boosts.models import AgentBoost
+        now = timezone.now()
         for u in qs:
             if use_gps and u.latitude is not None and u.longitude is not None:
                 distance_km = round(((float(u.latitude) - client_lat) ** 2 +
@@ -719,6 +872,9 @@ def nearby_agents_view(request):
                 "specialty": specialty or "Agent terrain",
                 "expertise_tags": expertise_tags,
                 "is_verified": u.is_verified,
+                "is_boosted": AgentBoost.objects.filter(
+                    agent=u, status='active', expires_at__gt=now,
+                ).exists(),
                 "is_online": u.is_online,
                 "is_available": u.is_online and u.is_agent,
                 "avatar_url": avatar_url,
@@ -894,7 +1050,8 @@ def kyc_submit_view(request):
     profile, _ = AgentProfile.objects.get_or_create(user=user)
     profile.id_card_photo = id_card
     profile.selfie_photo = selfie
-    profile.kyc_status = AgentKYCStatus.PENDING
+    profile.kyc_status = AgentKYCStatus.SUBMITTED
+    profile.rejection_reason = ''
     profile.save()
 
     return JsonResponse({
@@ -902,3 +1059,29 @@ def kyc_submit_view(request):
         'message': 'Documents KYC soumis. Validation en cours.',
         'data': {'kyc_status': profile.kyc_status},
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def referral_join_preview(request, referral_slug):
+    """
+    Valide un slug de parrainage deep link (fonaco.app/join/CODE).
+    Utilisé par Flutter avant inscription.
+    """
+    from .models import Influencer
+
+    code = (referral_slug or '').strip()
+    if not code:
+        return Response({'message': 'Code invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    influencer = Influencer.objects.filter(
+        Q(code_promo__iexact=code) | Q(referral_slug__iexact=code),
+    ).select_related('user').first()
+    if not influencer:
+        return Response({'message': 'Code de parrainage inconnu.'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({
+        'referral_code': influencer.referral_slug or influencer.code_promo,
+        'influencer_name': influencer.user.get_full_name() or influencer.user.username,
+        'valid': True,
+    })

@@ -16,6 +16,8 @@ class LocalListing(models.Model):
         SHOP = 'shop', 'Commerce'
         SERVICE = 'service', 'Service local'
         LEISURE = 'leisure', 'Loisir / sortie'
+        GYM = 'gym', 'Salle de sport'
+        MUSEUM = 'museum', 'Musée / culture'
         OTHER = 'other', 'Autre'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

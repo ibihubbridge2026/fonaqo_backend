@@ -1,0 +1,175 @@
+  {% extends "super_admin/base_admin.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<!-- Control Center Banner -->
+<div class="fq-control-banner">
+  <div>
+    <h3>FONAQO Control Center</h3>
+    <p>Temps réel · Escrow sécurisé · GPS Live · Agents certifiés</p>
+  </div>
+  <div class="fq-control-tags">
+    <span class="fq-control-tag">Temps réel</span>
+    <span class="fq-control-tag">Escrow sécurisé</span>
+    <span class="fq-control-tag">GPS Live</span>
+    <span class="fq-control-tag">IA Mission</span>
+  </div>
+</div>
+
+<!-- Hero -->
+<div class="fq-hero">
+  <div>
+    <h2>Bonjour {{ request.user.first_name|default:"Super Admin" }} 👋</h2>
+    <p>Vue globale de la plateforme FONAQO</p>
+  </div>
+  <div class="fq-hero-actions">
+    <button type="button" id="dashboard-refresh-btn" class="fq-btn fq-btn-secondary fq-btn-sm">
+      {% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %}
+      Actualiser
+    </button>
+    <button type="button" class="fq-btn fq-btn-primary fq-btn-sm" id="dashboard-date-range">
+      <span id="fq-date-range-label">7 derniers jours</span>
+    </button>
+  </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="fq-stat-grid" id="dashboard-kpis">
+  {% include "super_admin/partials/stat_card.html" with label="Volume Escrow" kpi_key="volume_escrow" icon="fee" trend="up" trend_val="+12%" %}
+  {% include "super_admin/partials/stat_card.html" with label="Missions actives" kpi_key="active_missions" icon="missions" icon_class="info" trend="up" trend_val="+8%" %}
+  {% include "super_admin/partials/stat_card.html" with label="Agents actifs" kpi_key="agents_count" icon="users" icon_class="success" trend="neutral" trend_val="Live" %}
+  {% include "super_admin/partials/stat_card.html" with label="Revenu plateforme" kpi_key="platform_revenue" icon="payments" icon_class="warning" trend="up" trend_val="+15%" %}
+</div>
+
+<!-- Main grid: Map + Activity + Alerts -->
+<div class="fq-grid-dashboard mb-6">
+  <!-- Map -->
+  <div class="fq-card fq-card-padded">
+    <div class="fq-section-header" style="margin-bottom:16px">
+      <div>
+        <h3 class="fq-section-title">Carte des opérations</h3>
+        <p class="fq-section-subtitle">Missions et agents en temps réel</p>
+      </div>
+      <a href="{% url 'admin-missions' %}" class="fq-btn fq-btn-ghost fq-btn-sm">Voir tout →</a>
+    </div>
+    <div class="fq-map-placeholder" id="ops-map">
+      <span class="text-sm text-[var(--fq-muted)] font-medium">Cotonou · Carte live</span>
+      <span class="fq-map-pin" style="top:35%;left:42%;background:var(--fq-yellow)"></span>
+      <span class="fq-map-pin" style="top:55%;left:58%;background:var(--fq-success)"></span>
+      <span class="fq-map-pin" style="top:28%;left:65%;background:var(--fq-info)"></span>
+      <span class="fq-map-pin" style="top:70%;left:35%;background:var(--fq-warning)"></span>
+    </div>
+    <div class="flex flex-wrap gap-3 mt-4 text-xs text-[var(--fq-muted)]">
+      <span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-full bg-[var(--fq-yellow)] inline-block"></i> Mission créée</span>
+      <span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-full bg-[var(--fq-success)] inline-block"></i> Agent disponible</span>
+      <span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-full bg-[var(--fq-info)] inline-block"></i> En cours</span>
+      <span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-full bg-[var(--fq-warning)] inline-block"></i> Alerte</span>
+    </div>
+  </div>
+
+  <!-- Activity Live -->
+  <div class="fq-card fq-card-padded">
+    <div class="fq-section-header" style="margin-bottom:12px">
+      <h3 class="fq-section-title flex items-center gap-2">
+        Activité live <span class="fq-live-dot"></span>
+      </h3>
+    </div>
+    <div id="dashboard-activity" class="fq-timeline min-h-[200px]">
+      <div class="fq-skeleton h-12 w-full mb-2"></div>
+      <div class="fq-skeleton h-12 w-full mb-2"></div>
+      <div class="fq-skeleton h-12 w-full"></div>
+    </div>
+  </div>
+
+  <!-- Alerts -->
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-4">Alertes importantes</h3>
+    <div id="dashboard-alerts">
+      <div class="fq-alert-item">
+        <span class="text-sm font-medium">Litiges ouverts</span>
+        <span class="fq-alert-count" data-kpi="disputes_open">—</span>
+      </div>
+      <div class="fq-alert-item">
+        <span class="text-sm font-medium">Paiements en attente</span>
+        <span class="fq-alert-count" data-kpi="payouts_pending">—</span>
+      </div>
+      <div class="fq-alert-item">
+        <span class="text-sm font-medium">Missions T+5</span>
+        <span class="fq-alert-count" data-kpi="stale_pending">—</span>
+      </div>
+      <div class="fq-alert-item">
+        <span class="text-sm font-medium">KYC à valider</span>
+        <span class="fq-alert-count" id="kyc-pending-count">—</span>
+      </div>
+    </div>
+    <a href="{% url 'admin-operations' %}" class="fq-btn fq-btn-primary fq-btn-sm w-full mt-4">Gérer les alertes</a>
+  </div>
+</div>
+
+<!-- Analytics row -->
+<div class="fq-grid-2 mb-6">
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-1">Aperçu financier</h3>
+    <p class="fq-section-subtitle mb-5">7 derniers jours</p>
+    <div class="fq-chart-bars" id="revenue-chart">
+      <div class="fq-chart-bar" style="height:45%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:62%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:38%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:75%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:55%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:88%;background:var(--fq-yellow)"></div>
+      <div class="fq-chart-bar" style="height:70%;background:var(--fq-yellow)"></div>
+    </div>
+    <div class="fq-chart-legend">
+      <span><i style="background:var(--fq-yellow)"></i> Revenus</span>
+      <span><i style="background:var(--fq-black)"></i> Escrow</span>
+      <span><i style="background:var(--fq-info)"></i> Commissions</span>
+    </div>
+  </div>
+  <div class="fq-card fq-card-padded">
+    <h3 class="fq-section-title mb-5">Répartition des revenus</h3>
+    <div class="space-y-5" id="revenue-split-bars">
+      <div>
+        <div class="flex justify-between text-sm mb-2"><span class="font-medium">Agents</span><strong data-kpi="split_agent" class="mono font-semibold"><span class="fq-skeleton inline-block w-10 h-4"></span></strong></div>
+        <div class="fq-progress"><div class="fq-progress-bar agent" data-bar="agent" style="width:0%"></div></div>
+      </div>
+      <div>
+        <div class="flex justify-between text-sm mb-2"><span class="font-medium">Plateforme</span><strong data-kpi="split_platform" class="mono font-semibold"><span class="fq-skeleton inline-block w-10 h-4"></span></strong></div>
+        <div class="fq-progress"><div class="fq-progress-bar platform" data-bar="platform" style="width:0%"></div></div>
+      </div>
+      <div>
+        <div class="flex justify-between text-sm mb-2"><span class="font-medium">Influenceurs</span><strong data-kpi="split_influencer" class="mono font-semibold"><span class="fq-skeleton inline-block w-10 h-4"></span></strong></div>
+        <div class="fq-progress"><div class="fq-progress-bar influencer" data-bar="influencer" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent missions table -->
+<div class="fq-card overflow-hidden">
+  <div class="flex items-center justify-between px-6 py-5 border-b border-[var(--fq-border-light)]">
+    <div>
+      <h3 class="fq-section-title">Dernières missions</h3>
+      <p class="fq-section-subtitle">Activité récente sur la plateforme</p>
+    </div>
+    <a href="{% url 'admin-missions' %}" class="fq-btn fq-btn-ghost fq-btn-sm">Voir tout →</a>
+  </div>
+  <div class="fq-table-wrap custom-scrollbar">
+    <table class="fq-table">
+      <thead>
+        <tr>
+          <th>Mission</th>
+          <th>Client</th>
+          <th>Agent</th>
+          <th>Montant</th>
+          <th>Statut</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody id="dashboard-recent-missions">
+        <tr><td colspan="6" class="text-center py-8"><span class="fq-skeleton inline-block w-48 h-6"></span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

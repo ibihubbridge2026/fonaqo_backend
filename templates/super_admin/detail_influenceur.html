@@ -1,0 +1,66 @@
+{% extends use_influencer_layout|yesno:"super_admin/base_influencer_portal.html,super_admin/base_admin.html" %}
+{% block title %}{{ influencer.name }} — Influenceur{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>{{ influencer.name }}</h2>
+    <p class="mono text-sm text-[var(--fq-muted)]">@{{ influencer.code_promo }} · <code>fonaco.app/join/{{ influencer.referral_slug|default:influencer.code_promo }}</code></p>
+  </div>
+  {% if is_influencer_self %}
+  <button type="button" data-admin-action="open-withdrawal-request" data-influencer-id="{{ influencer_id }}" class="fq-btn fq-btn-primary fq-btn-sm">
+    Demander un retrait
+  </button>
+  {% elif can_admin_actions %}
+  <a href="{% url 'admin-influencers' %}" class="fq-btn fq-btn-secondary fq-btn-sm">← Liste</a>
+  {% endif %}
+</div>
+
+<div id="influencer-detail-root" data-influencer-id="{{ influencer_id }}" data-is-self="{{ is_influencer_self|yesno:'1,0' }}" data-can-admin="{{ can_admin_actions|yesno:'1,0' }}">
+  <div class="fq-stat-grid mb-6" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+    <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Solde actuel</p><p class="fq-stat-value" style="font-size:20px" data-inf="balance_current">—</p></div>
+    <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Total gagné</p><p class="fq-stat-value" style="font-size:20px" data-inf="total_earned">—</p></div>
+    <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Total retiré</p><p class="fq-stat-value" style="font-size:20px" data-inf="total_withdrawn">—</p></div>
+    <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Clients parrainés</p><p class="fq-stat-value" style="font-size:20px" data-inf="clients_count">—</p></div>
+  </div>
+
+  <div class="fq-grid-2 mb-6">
+    <div class="fq-card fq-card-padded">
+      <h3 class="fq-section-title mb-4">Contrat</h3>
+      <dl class="space-y-2 text-sm">
+        <div class="flex justify-between"><dt class="text-[var(--fq-muted)]">Commission</dt><dd class="mono font-semibold" data-inf="commission_rate">—</dd></div>
+        <div class="flex justify-between"><dt class="text-[var(--fq-muted)]">Durée</dt><dd data-inf="duration_years">—</dd></div>
+        <div class="flex justify-between"><dt class="text-[var(--fq-muted)]">Début</dt><dd class="mono" data-inf="contract_start">—</dd></div>
+        <div class="flex justify-between"><dt class="text-[var(--fq-muted)]">Fin</dt><dd class="mono" data-inf="contract_end">—</dd></div>
+      </dl>
+    </div>
+    {% if can_admin_actions and not influencer.portal_user %}
+    <div class="fq-card fq-card-padded border-2 border-dashed border-[var(--fq-yellow)]">
+      <h3 class="fq-section-title mb-2">Compte portail</h3>
+      <p class="text-sm text-[var(--fq-muted)] mb-4">Créer les identifiants de connexion pour cet influenceur.</p>
+      <button type="button" data-admin-action="open-influencer-portal-link" data-influencer-id="{{ influencer_id }}" class="fq-btn fq-btn-primary fq-btn-sm">Créer accès portail</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <section class="fq-card overflow-hidden mb-6">
+    <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Clients enregistrés via parrainage</h3></div>
+    <div class="fq-table-wrap">
+      <table class="fq-table">
+        <thead><tr><th>Client</th><th>Téléphone</th><th>Inscrit le</th><th>Missions</th><th class="text-right">Montant missions</th><th class="text-right">Votre commission</th></tr></thead>
+        <tbody id="influencer-clients-body"><tr><td colspan="6" class="text-center py-8"><span class="fq-skeleton inline-block w-32 h-5"></span></td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="fq-card overflow-hidden">
+    <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Demandes de retrait</h3></div>
+    <div class="fq-table-wrap">
+      <table class="fq-table">
+        <thead><tr><th>Date</th><th>Montant</th><th>Statut</th><th>Note</th>{% if can_admin_actions %}<th class="text-right">Actions</th>{% endif %}</tr></thead>
+        <tbody id="influencer-withdrawals-body"><tr><td colspan="5" class="text-center py-8"><span class="fq-skeleton inline-block w-32 h-5"></span></td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

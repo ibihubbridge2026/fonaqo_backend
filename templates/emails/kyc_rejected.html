@@ -1,0 +1,13 @@
+{% extends "emails/base.html" %}
+{% block title %}KYC à corriger{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:22px;color:#0B0B0B;">Dossier KYC à corriger</h1>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#444;">
+  Bonjour {{ user.first_name|default:user.username }}, votre dossier n'a pas pu être validé.
+</p>
+{% if reason %}
+<p style="margin:0 0 20px;padding:14px 16px;background:#FFF8E1;border-radius:10px;font-size:14px;color:#333;"><strong>Motif :</strong> {{ reason }}</p>
+{% endif %}
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">Soumettez à nouveau vos documents depuis l'application.</p>
+<a href="https://fonaco.app" style="display:inline-block;background:#FFD100;color:#0B0B0B;font-weight:700;font-size:15px;padding:14px 28px;border-radius:12px;text-decoration:none;">Resoumettre mes documents</a>
+{% endblock %}

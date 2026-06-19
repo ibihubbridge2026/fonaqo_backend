@@ -1,0 +1,36 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Équipe Staff{% endblock %}
+{% block content %}
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Équipe Staff</h2><p>Super Admin (accès total) et Gestionnaire (accès limité)</p></div>
+  <button type="button" data-admin-action="open-staff-create" class="fq-btn fq-btn-primary fq-btn-sm">+ Créer un compte staff</button>
+</div>
+
+<section class="fq-card overflow-hidden mb-6">
+  <div class="fq-table-wrap">
+    <table class="fq-table">
+      <thead><tr><th>Utilisateur</th><th>Email</th><th>Rôle</th><th>Statut</th><th>Inscrit le</th></tr></thead>
+      <tbody>
+        {% for u in staff_users %}
+        <tr>
+          <td class="font-semibold">{{ u.get_full_name|default:u.username }} <span class="text-[var(--fq-muted)]">@{{ u.username }}</span></td>
+          <td>{{ u.email }}</td>
+          <td>{% if u.is_superuser %}<span class="fq-badge fq-badge-progress">Super Admin</span>{% else %}<span class="fq-badge fq-badge-default">Gestionnaire</span>{% endif %}</td>
+          <td>{% if u.is_active %}<span class="fq-badge fq-badge-completed">Actif</span>{% else %}<span class="fq-badge fq-badge-cancelled">Inactif</span>{% endif %}</td>
+          <td class="mono text-xs">{{ u.date_joined|date:"d/m/Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="fq-empty">Aucun compte staff.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="fq-card fq-card-padded text-sm text-[var(--fq-muted)]">
+  <p class="font-semibold text-[var(--fq-text)] mb-2">Permissions Gestionnaire</p>
+  <p>Dashboard · Agents · Clients · Missions · Transactions · Influenceurs · Notifications</p>
+  <p class="mt-2 font-semibold text-[var(--fq-text)]">Réservé Super Admin</p>
+  <p>Artisans · Wallet · Boost · Configuration · Staff · Journal d'audit</p>
+</div>
+{% endblock %}

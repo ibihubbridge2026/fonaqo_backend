@@ -1,0 +1,7 @@
+{% comment %}KPI card — usage: {% include "super_admin/partials/kpi_card.html" with label="Volume Escrow" kpi_key="volume_escrow" shimmer_w="w-24" shimmer_h="h-8" %}{% endcomment %}
+<div class="fonaco-card fonaco-kpi p-6">
+  <p class="font-label-sm text-on-surface-variant uppercase tracking-wide">{{ label }}</p>
+  <h3 class="font-headline-lg text-on-background mt-2 fonaco-kpi-value" data-kpi="{{ kpi_key }}">
+    <span class="admin-shimmer inline-block {{ shimmer_w|default:'w-16' }} {{ shimmer_h|default:'h-8' }}"></span>
+  </h3>
+</div>

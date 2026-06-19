@@ -1,0 +1,1 @@
+Compte agent validé — {{ user.first_name|default:user.username }}, votre KYC est approuvé. Ouvrez l'application FONACO.

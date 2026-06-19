@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ agent.get_full_name|default:agent.username }} — Agent FONACO</title>
+  <style>
+    :root { --yellow:#FFD100; --dark:#1A1A1A; --muted:#666; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:#f7f7f7; color:var(--dark); }
+    .wrap { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+    .card { background:#fff; border-radius:16px; padding:24px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+    .header { display:flex; gap:16px; align-items:center; margin-bottom:20px; }
+    .avatar { width:72px; height:72px; border-radius:50%; background:#eee; border:3px solid var(--yellow); object-fit:cover; }
+    .badge { display:inline-block; background:var(--yellow); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+    h1 { margin:0 0 4px; font-size:1.4rem; }
+    .muted { color:var(--muted); font-size:.9rem; }
+    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:20px 0; }
+    .stat { text-align:center; padding:12px; background:#fafafa; border-radius:12px; }
+    .stat strong { display:block; font-size:1.3rem; }
+    .reviews { margin-top:24px; }
+    .review { border-top:1px solid #eee; padding:12px 0; }
+    .brand { text-align:center; margin-top:32px; color:var(--muted); font-size:.85rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        {% if agent.profile_picture %}
+        <img class="avatar" src="{{ agent.profile_picture.url }}" alt="">
+        {% else %}
+        <div class="avatar"></div>
+        {% endif %}
+        <div>
+          <h1>{{ agent.get_full_name|default:agent.username }}</h1>
+          <p class="muted">{% if profile.agent_code %}{{ profile.agent_code }} · {% endif %}{{ agent.city|default:"Cotonou" }}</p>
+          {% if is_certified %}<span class="badge">AGENT CERTIFIÉ ★</span>{% endif %}
+        </div>
+      </div>
+      {% if profile.bio %}<p>{{ profile.bio }}</p>{% endif %}
+      <div class="stats">
+        <div class="stat"><strong>{{ completed_missions }}</strong><span class="muted">Missions</span></div>
+        <div class="stat"><strong>{% if avg_rating %}{{ avg_rating }}/5{% else %}—{% endif %}</strong><span class="muted">Note</span></div>
+        <div class="stat"><strong>{{ agent.reliability_score|floatformat:0 }}%</strong><span class="muted">Fiabilité</span></div>
+      </div>
+      {% if reviews %}
+      <div class="reviews">
+        <h2 style="font-size:1rem;">Avis clients</h2>
+        {% for m in reviews %}
+        <div class="review">
+          <strong>{{ m.client_rating }}/5</strong>
+          {% if m.client_review %}<p class="muted">{{ m.client_review }}</p>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    <p class="brand">FONACO — Ta mission, notre action.</p>
+  </div>
+</body>
+</html>

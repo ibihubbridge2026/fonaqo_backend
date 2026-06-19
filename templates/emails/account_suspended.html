@@ -1,0 +1,10 @@
+{% extends "emails/base.html" %}
+{% block title %}Compte suspendu{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 12px;font-size:22px;color:#0B0B0B;">Compte suspendu</h1>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#444;">
+  Bonjour {{ user.first_name|default:user.username }}, votre compte FONACO a été temporairement suspendu.
+</p>
+{% if reason %}<p style="margin:0 0 20px;font-size:14px;color:#666;">{{ reason }}</p>{% endif %}
+<p style="margin:0;font-size:15px;line-height:1.6;color:#444;">Contactez notre support pour faire appel de cette décision.</p>
+{% endblock %}

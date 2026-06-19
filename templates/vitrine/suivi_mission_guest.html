@@ -1,0 +1,104 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Suivi de mission — FONACO</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Material+Symbols+Outlined&display=swap" rel="stylesheet"/>
+  <style>.material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24}</style>
+</head>
+<body class="min-h-screen bg-[#f4f6fa] text-[#191c1e] font-[Inter] pb-28">
+  <header class="bg-white border-b border-[#c4c5d5] py-4 px-6 sticky top-0 z-40">
+    <div class="max-w-3xl mx-auto flex items-center justify-between">
+      <a href="/vitrine/creer-mission/" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-[#00288e] text-white flex items-center justify-center font-bold">F</div>
+        <span class="font-bold text-[#00288e]">Suivi mission</span>
+      </a>
+      <a href="/vitrine/creer-mission/" class="text-sm font-semibold text-[#fd761a]">+ Nouvelle mission</a>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <form id="guest-track-form" class="bg-white border border-[#c4c5d5] rounded-2xl shadow-lg p-6 mb-8">
+      <label class="block text-sm font-semibold mb-2" for="guest-track-ref">Référence de mission</label>
+      <div class="flex gap-2">
+        <input id="guest-track-ref" type="text" value="{{ reference }}" placeholder="FNC-4829-BJ" class="flex-1 border border-gray-300 rounded-xl px-4 py-3 font-mono uppercase focus:ring-2 focus:ring-[#00288e]"/>
+        <button type="submit" class="px-6 py-3 bg-[#00288e] text-white font-bold rounded-xl">Rechercher</button>
+      </div>
+      <p class="text-xs text-gray-400 mt-2">Code reçu par e-mail après création (ex. FNC-4829-BJ)</p>
+    </form>
+
+    <div id="guest-track-loading" class="hidden text-center py-10">
+      <div class="inline-block w-10 h-10 border-4 border-[#00288e] border-t-transparent rounded-full animate-spin"></div>
+    </div>
+    <div id="guest-track-error" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm text-center mb-6"></div>
+
+    <div id="guest-track-result" class="hidden space-y-6">
+      <div class="bg-white border border-[#c4c5d5] rounded-2xl p-6 shadow-sm">
+        <div class="flex justify-between items-start gap-4">
+          <div>
+            <p id="guest-mission-code" class="font-mono text-xs text-[#fd761a] font-bold uppercase"></p>
+            <h2 id="guest-mission-title" class="text-xl font-bold text-[#00288e] mt-1"></h2>
+            <p id="guest-mission-meta" class="text-sm text-gray-500 mt-1"></p>
+          </div>
+          <span id="guest-mission-status-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-800"></span>
+        </div>
+        <p id="guest-mission-address" class="text-sm text-gray-600 mt-3 flex items-center gap-1">
+          <span class="material-symbols-outlined text-base">location_on</span>
+          <span></span>
+        </p>
+      </div>
+
+      <div id="guest-pending-alert" class="hidden bg-[#FFF7ED] border-l-4 border-[#fd761a] p-4 rounded-lg text-sm">
+        <strong class="text-[#9d4300]">Recherche élargie</strong> — Aucun agent n'a accepté après 5 min. Notification des agents disponibles en cours.
+      </div>
+
+      <!-- Timeline -->
+      <div class="bg-white border border-[#c4c5d5] rounded-2xl p-6 shadow-sm">
+        <h3 class="font-bold mb-4 flex items-center gap-2"><span class="material-symbols-outlined text-[#00288e]">timeline</span> Progression</h3>
+        <ol id="guest-timeline" class="space-y-0"></ol>
+      </div>
+
+      <!-- Agent contact -->
+      <div id="guest-agent-card" class="hidden bg-white border border-[#c4c5d5] rounded-2xl p-6 shadow-sm">
+        <h3 class="font-bold mb-3">Votre agent</h3>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p id="guest-agent-name" class="font-bold text-lg"></p>
+            <p id="guest-agent-skills" class="text-sm text-gray-500"></p>
+          </div>
+          <a id="guest-agent-call" href="#" class="flex items-center gap-2 px-5 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl">
+            <span class="material-symbols-outlined">call</span> Appeler
+          </a>
+        </div>
+      </div>
+
+      <!-- Preuve photo -->
+      <div id="guest-proof-card" class="hidden bg-white border border-[#c4c5d5] rounded-2xl p-6 shadow-sm">
+        <h3 class="font-bold mb-3 flex items-center gap-2"><span class="material-symbols-outlined">photo_camera</span> Preuve de réalisation</h3>
+        <img id="guest-proof-image" src="" alt="Preuve mission" class="w-full rounded-xl border border-gray-200 max-h-80 object-cover"/>
+        <p class="text-xs text-gray-400 mt-2">Validez la prestation depuis l'application mobile pour libérer l'Escrow.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Bannière app mobile -->
+  <footer class="fixed bottom-0 inset-x-0 bg-[#00288e] text-white py-4 px-6 shadow-2xl z-30">
+    <div class="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+      <p><strong>Passez sur l'app FONACO</strong> — GPS live, chat agent, wallet &amp; historique complet.</p>
+      <a href="/vitrine/creer-mission/" class="px-4 py-2 bg-[#fd761a] font-bold rounded-lg whitespace-nowrap">Télécharger l'app</a>
+    </div>
+  </footer>
+
+  <script>
+    window.__FONACO_GUEST = {
+      apiBase: "/api/v1/public",
+      initialRef: "{{ reference|escapejs }}",
+      pollIntervalMs: 15000
+    };
+  </script>
+  <script src="{% static 'vitrine/js/guest.js' %}"></script>
+</body>
+</html>

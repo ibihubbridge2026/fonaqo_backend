@@ -1,0 +1,67 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr" class="fq-login-html">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FONAQO — Connexion BackOffice</title>
+  <link rel="icon" href="{% static 'super_admin/fonaco-logo.png' %}" type="image/png"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="{% static 'super_admin/admin.css' %}?v=20250624"/>
+</head>
+<body class="fq-login-body">
+  <div class="fq-login-page">
+    <div class="fq-login-left">
+      <img src="{% static 'super_admin/fonaco-logo.png' %}" alt="FONAQO" class="fq-login-logo"/>
+      <h2>Ta mission,<br/><em>notre action.</em></h2>
+      <p class="fq-login-tagline">
+        Console d'administration FONAQO — gestion des missions, escrow, agents et finances en temps réel.
+      </p>
+    </div>
+    <div class="fq-login-right">
+      <div class="fq-login-card">
+        <div class="fq-login-card-header">
+          <img src="{% static 'super_admin/fonaco-logo.png' %}" alt="FONAQO" class="fq-login-card-logo"/>
+          <h1 class="fq-login-card-title">BackOffice Staff</h1>
+          <p class="fq-login-card-subtitle">Staff, gestionnaires et influenceurs partenaires</p>
+        </div>
+        {% if form.errors or request.GET.error %}
+        <div class="fq-login-error">
+          Identifiants invalides ou compte sans accès au portail.
+        </div>
+        {% endif %}
+        <form method="post" class="fq-login-form">
+          {% csrf_token %}
+          <div>
+            <label class="fq-label" for="login-username">Email ou téléphone</label>
+            <input id="login-username" name="username" type="text" required autofocus class="fq-input" placeholder="Email, téléphone ou identifiant"/>
+          </div>
+          <div>
+            <label class="fq-label" for="login-password">Mot de passe</label>
+            <div class="fq-password-wrap">
+              <input id="login-password" name="password" type="password" required class="fq-input fq-password-field" autocomplete="current-password"/>
+              <button type="button" class="fq-password-toggle" data-password-toggle="login-password" aria-label="Afficher le mot de passe">
+                <svg class="fq-eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="fq-eye-closed hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a21.77 21.77 0 015.06-6.94M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a21.8 21.8 0 01-5.06 6.94"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
+          </div>
+          <button type="submit" class="fq-btn fq-btn-primary">Se connecter</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll('[data-password-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = document.getElementById(btn.getAttribute('data-password-toggle'));
+        if (!input) return;
+        const show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.querySelector('.fq-eye-open')?.classList.toggle('hidden', !show);
+        btn.querySelector('.fq-eye-closed')?.classList.toggle('hidden', show);
+      });
+    });
+  </script>
+</body>
+</html>

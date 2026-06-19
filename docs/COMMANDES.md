@@ -13,8 +13,9 @@ Ce document est ta référence pour installer, piloter et maintenir le backend F
    - `docker compose up --build -d`
 3. **Base de Données** : Appliquez les schémas SQL à la base de données.
    - `make migrate`
-4. **Données de Test** : Chargez les catégories de services et les niveaux d'agents initiaux.
-   - `make seed`
+4. **Données de Test** : Charge utilisateurs demo, missions, catégories, boosts et comptes UAT.
+   - `make seed`  ou  `docker compose exec web python manage.py seed_data password123`
+   - Reset complet : `make reset-seed`  (`--flush` puis seed)
 5. **Accès Admin** : Créez votre compte administrateur pour le back-office (`http://localhost:8000/admin`).
    - `docker compose exec web python manage.py createsuperuser`
 
@@ -104,8 +105,9 @@ docker compose stop
 # Collecter les fichiers CSS/static
 docker compose exec web python manage.py collectstatic --noinput
 
-# Seeder des données
+# Seeder (source unique : apps/core/seed.py)
 docker compose exec web python manage.py seed_data password123
+docker compose exec web python manage.py seed_data password123 --flush
 
 
 # =========================
@@ -193,3 +195,5 @@ erreurs lint
 warnings automatiques
 
 dart fix --apply
+
+docker compose exec maildev

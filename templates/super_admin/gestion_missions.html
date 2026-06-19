@@ -1,0 +1,138 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Missions{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Missions</h2>
+    <p>Suivi global, escrow et résolution</p>
+  </div>
+</div>
+
+<!-- Stats row -->
+<div class="fq-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Total</p>
+    <p class="fq-stat-value" style="font-size:20px">{{ missions|length }}</p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Fantômes 24h</p>
+    <p class="fq-stat-value" style="font-size:20px;color:var(--fq-danger)">{{ ghost_missions|length }}</p>
+  </div>
+</div>
+
+{% if ghost_missions %}
+<section class="fq-card fq-card-padded mb-6" style="border-left:4px solid var(--fq-danger)">
+  <h3 class="fq-section-title text-[var(--fq-danger)] mb-4 flex items-center gap-2">
+    {% include "super_admin/partials/icon.html" with name="ghost" class="w-5 h-5" %}
+    Missions fantômes PENDING &gt; 24h ({{ ghost_missions|length }})
+  </h3>
+  <div class="space-y-2">
+    {% for m in ghost_missions %}
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-[var(--fq-bg)]">
+      <div>
+        <span class="mono font-bold text-[var(--fq-black)]">#{{ m.id|stringformat:"s"|slice:":8"|upper }}</span>
+        <span class="text-sm ml-2">{{ m.title|truncatechars:40 }}</span>
+        <span class="text-xs text-[var(--fq-muted)] block mt-0.5">{{ m.created_at|timesince }} ago</span>
+      </div>
+      <div class="flex gap-2">
+        <button type="button" data-admin-action="open-assign" data-mission-id="{{ m.id }}" data-mission-ref="#{{ m.id|stringformat:'s'|slice:':8'|upper }}"
+          class="fq-btn fq-btn-secondary fq-btn-sm">Assigner</button>
+        <button type="button" data-admin-action="force-cancel-mission" data-mission-id="{{ m.id }}"
+          class="fq-btn fq-btn-danger fq-btn-sm">Annuler</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="fq-card overflow-hidden">
+  <div class="fq-filters">
+    <input type="search" id="missions-filter" placeholder="Rechercher référence, client, agent…" class="fq-search-field"/>
+    <select class="fq-input" style="width:auto;min-width:140px" disabled title="Filtre statut — bientôt">
+      <option>Tous statuts</option>
+    </select>
+    <button type="button" class="fq-filter-chip active">Toutes</button>
+    <button type="button" class="fq-filter-chip">En cours</button>
+    <button type="button" class="fq-filter-chip">Terminées</button>
+  </div>
+  <div class="fq-table-wrap custom-scrollbar">
+    <table class="fq-table" id="missions-table">
+      <thead>
+        <tr>
+          <th>Mission</th>
+          <th>Client</th>
+          <th>Agent</th>
+          <th>Montant</th>
+          <th>Statut</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in missions %}
+        <tr class="mission-row" data-search="{{ m.id }} {{ m.client.username }} {{ m.title }} {{ m.agent.username|default:'' }}"
+            data-row-detail='{"Référence":"#{{ m.id|stringformat:"s"|slice:":8"|upper }}","Titre":"{{ m.title|escapejs }}","Client":"{{ m.client.username|default:m.client.phone_number|escapejs }}","Agent":"{% if m.agent %}{{ m.agent.username }}{% else %}Non assigné{% endif %}","Montant":"{{ m.price }} FCFA","Statut":"{{ m.status }}","Main-d oeuvre":"{{ m.labor_cost|default:m.service_amount|default:m.price }} FCFA","Matériel":"{{ m.material_cost|default:m.purchase_amount|default:"0" }} FCFA","Escrow":"{% if m.escrow %}{{ m.escrow.amount }} FCFA ({{ m.escrow.status }}){% else %}Non bloqué{% endif %}"}'>
+          <td class="mono font-semibold">#{{ m.id|stringformat:"s"|slice:":8"|upper }}</td>
+          <td>{{ m.client.username|default:m.client.phone_number }}</td>
+          <td>{% if m.agent %}{{ m.agent.username }}{% else %}<span class="fq-badge fq-badge-pending">Non assigné</span>{% endif %}</td>
+          <td class="mono font-semibold">{{ m.price }} FCFA</td>
+          <td>
+            <span class="fq-badge {% if m.status == 'COMPLETED' %}fq-badge-completed{% elif m.status == 'DISPUTED' %}fq-badge-disputed{% elif m.status == 'PENDING' %}fq-badge-pending{% elif m.status == 'CANCELLED' %}fq-badge-cancelled{% else %}fq-badge-progress{% endif %}">{{ m.status }}</span>
+          </td>
+          <td class="text-right space-x-1">
+            <button type="button" data-admin-action="view-row-detail" class="fq-btn fq-btn-ghost fq-btn-sm" title="Voir détails">{% include "super_admin/partials/icon.html" with name="eye" class="w-4 h-4" %}</button>
+            <button type="button" data-mission-toggle="{{ m.id }}" class="fq-icon-btn" style="width:36px;height:36px" aria-label="Détails">
+              {% include "super_admin/partials/icon.html" with name="expand" class="w-4 h-4" %}
+            </button>
+          </td>
+        </tr>
+        <tr data-mission-detail="{{ m.id }}" class="hidden">
+          <td colspan="6" class="!bg-[var(--fq-bg)]">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4">
+              <div class="fq-card fq-card-padded" style="padding:16px">
+                <p class="fq-label">Main-d'œuvre</p>
+                <p class="mono font-bold text-lg">{{ m.labor_cost|default:m.service_amount|default:m.price }} FCFA</p>
+              </div>
+              <div class="fq-card fq-card-padded" style="padding:16px">
+                <p class="fq-label">Matériel</p>
+                <p class="mono font-bold text-lg">{{ m.material_cost|default:m.purchase_amount|default:"0" }} FCFA</p>
+              </div>
+              <div class="fq-card fq-card-padded" style="padding:16px">
+                <p class="fq-label">Escrow</p>
+                {% if m.escrow %}
+                <p class="mono font-bold">{{ m.escrow.amount }} FCFA</p>
+                <p class="text-xs mt-1 text-[var(--fq-muted)]">{{ m.escrow.status }}</p>
+                {% else %}<p class="text-[var(--fq-muted)]">Non bloqué</p>{% endif %}
+              </div>
+            </div>
+            {% if m.status == 'COMPLETED' and m.escrow_split_records.all %}
+            <div class="px-4 pb-4">
+              <p class="fq-label mb-2">Split escrow</p>
+              <div class="flex flex-wrap gap-2">
+                {% for split in m.escrow_split_records.all %}
+                <div class="fq-card px-3 py-2 text-sm">
+                  <span class="text-[10px] font-bold uppercase text-[var(--fq-muted)]">{{ split.beneficiary_type }}</span>
+                  <p class="mono font-bold">{{ split.amount_fcfa }} FCFA</p>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+            <div class="px-4 pb-4">
+              <a href="/track/?ref={{ m.id }}" target="_blank" class="text-sm font-semibold text-[var(--fq-black)] hover:underline">Lien suivi public →</a>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="fq-empty">Aucune mission enregistrée.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script type="application/json" id="assign-agents-json">
+[{% for a in agents_for_assign %}{"id":"{{ a.id }}","username":"{{ a.username }}"}{% if not forloop.last %},{% endif %}{% endfor %}]
+</script>
+{% endblock %}

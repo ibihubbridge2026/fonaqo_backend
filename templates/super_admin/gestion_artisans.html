@@ -1,0 +1,44 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Artisans experts{% endblock %}
+{% block content %}
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Artisans experts</h2><p>Annuaire LeBonCoin — fiches locales indépendantes des agents terrain</p></div>
+  <button type="button" data-admin-action="open-artisan-create" class="fq-btn fq-btn-primary fq-btn-sm">+ Créer un artisan</button>
+</div>
+
+<div class="fq-stat-grid mb-6" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Total artisans</p><p class="fq-stat-value" style="font-size:22px">{{ stats.total }}</p></div>
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Mis en avant</p><p class="fq-stat-value" style="font-size:22px">{{ stats.featured }}</p></div>
+  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Villes</p><p class="fq-stat-value" style="font-size:22px">{{ stats.cities }}</p></div>
+</div>
+
+<section class="fq-card overflow-hidden">
+  <div class="fq-filters">
+    <input type="search" id="artisans-filter" placeholder="Rechercher artisan…" class="fq-search-field"/>
+  </div>
+  <div class="fq-table-wrap">
+    <table class="fq-table" id="artisans-table">
+      <thead><tr><th>Expert</th><th>Téléphone</th><th>Spécialité</th><th>Ville</th><th>Note</th><th class="text-right">Actions</th></tr></thead>
+      <tbody>
+        {% for listing in artisans %}
+        <tr class="artisan-row"
+            data-search="{{ listing.name }} {{ listing.specialty }} {{ listing.city }}"
+            data-row-detail='{"Nom":"{{ listing.name|escapejs }}","Spécialité":"{{ listing.specialty|default:"—"|escapejs }}","Téléphone":"{{ listing.phone|default:"—"|escapejs }}","Email":"{{ listing.email|default:"—"|escapejs }}","Ville":"{{ listing.city|default:"—"|escapejs }}","Quartier":"{{ listing.district|default:"—"|escapejs }}","Description":"{{ listing.description|default:"—"|truncatechars:200|escapejs }}","Note":"{{ listing.rating }}","ID":"{{ listing.id }}"}'>
+          <td class="font-semibold">{{ listing.name }}{% if listing.is_featured %} <span class="fq-badge fq-badge-completed">★</span>{% endif %}</td>
+          <td class="mono">{{ listing.phone|default:"—" }}</td>
+          <td class="text-sm">{{ listing.specialty|default:"—" }}</td>
+          <td>{{ listing.city|default:"—" }}</td>
+          <td class="mono">{{ listing.rating }}</td>
+          <td class="text-right space-x-1">
+            <button type="button" data-admin-action="view-row-detail" class="fq-btn fq-btn-ghost fq-btn-sm" title="Voir détails">{% include "super_admin/partials/icon.html" with name="eye" class="w-4 h-4" %}</button>
+            <button type="button" data-admin-action="revoke-artisan" data-listing-id="{{ listing.id }}" data-name="{{ listing.name }}" class="fq-btn fq-btn-ghost fq-btn-sm text-[var(--fq-danger)]">Désactiver</button>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="fq-empty">Aucun artisan — cliquez sur « Créer un artisan ».</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

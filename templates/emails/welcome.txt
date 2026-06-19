@@ -1,0 +1,5 @@
+Bienvenue sur FONACO, {{ user.first_name|default:user.username }} !
+
+Votre compte {% if role == 'agent' %}agent{% else %}client{% endif %} est prêt.
+
+— FONACO

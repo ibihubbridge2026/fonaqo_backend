@@ -1,0 +1,9 @@
+Bonjour {{ user.first_name|default:user.username }},
+
+Félicitations ! Votre badge professionnel FONACO a été validé par notre équipe.
+
+{% if agent_code %}Votre identifiant agent : {{ agent_code }}{% endif %}
+
+Ouvrez l'application FONACO Agent → Paramètres → « Télécharger mon badge » pour obtenir votre carte PDF (téléchargements illimités).
+
+L'équipe FONACO

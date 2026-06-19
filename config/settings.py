@@ -104,9 +104,13 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.core.staff_redirect_middleware.StaffDashboardRedirectMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
+
+LOGIN_URL = '/admin-portal/login/'
+LOGIN_REDIRECT_URL = '/admin-dashboard/'
 
 TEMPLATES = [
     {
@@ -164,6 +168,11 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
+
+AUTHENTICATION_BACKENDS = [
+    'apps.accounts.backends.PhoneEmailBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
@@ -246,13 +255,16 @@ SPECTACULAR_SETTINGS = {
 }
 
 # Configuration Email pour MailDev (développement)
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'localhost'  # ou 'maildev' si sous Docker
-EMAIL_PORT = 1025
-EMAIL_USE_TLS = False
-EMAIL_HOST_USER = ''
-EMAIL_HOST_PASSWORD = ''
-DEFAULT_FROM_EMAIL = 'noreply@fonaco.com'
+EMAIL_BACKEND = env(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = env('EMAIL_HOST', default='localhost')
+EMAIL_PORT = env.int('EMAIL_PORT', default=1025)
+EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=False)
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@fonaco.com')
 
 CELERY_BEAT_SCHEDULE = {
     'cleanup-missions-every-30-mins': {
@@ -271,6 +283,18 @@ if os.path.exists(FIREBASE_KEY_PATH):
 
 # Mistral AI Configuration (Recherche IA)
 MISTRAL_API_KEY = env("MISTRAL_API_KEY", default="")
+
+# FeexPay (Mobile Money Bénin)
+FEEXPAY_API_KEY = env('FEEXPAY_API_KEY', default='')
+FEEXPAY_WEBHOOK_SECRET = env('FEEXPAY_WEBHOOK_SECRET', default='')
+FEEXPAY_BASE_URL = env('FEEXPAY_BASE_URL', default='https://api.feexpay.me/backend')
+FEEXPAY_CALLBACK_URL = env('FEEXPAY_CALLBACK_URL', default='')
+FEEXPAY_SANDBOX = env.bool('FEEXPAY_SANDBOX', default=True)
+FEEXPAY_CHECKOUT_URL_TEMPLATE = env('FEEXPAY_CHECKOUT_URL_TEMPLATE', default='')
+
+# Vitrine web invité
+SITE_BASE_URL = env('SITE_BASE_URL', default='http://localhost:8000')
+GOOGLE_PLACES_API_KEY = env('GOOGLE_PLACES_API_KEY', default='')
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=30),

@@ -1,10 +1,14 @@
 import logging
 import uuid
+from decimal import Decimal
+
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
-from apps.core.choices import AgentKYCStatus, KYCStatus
+from apps.core.choices import AgentKYCStatus, AgentBadgeStatus, KYCStatus
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -16,6 +20,11 @@ class User(AbstractUser):
     # --- Rôles & Statut ---
     is_agent = models.BooleanField(_('est agent terrain'), default=False)
     is_client = models.BooleanField(_('est client'), default=True)
+    is_guest = models.BooleanField(
+        _('compte invité (web vitrine)'),
+        default=False,
+        help_text=_('Créé via le parcours web sans application mobile'),
+    )
     is_verified = models.BooleanField(_('profil vérifié (KYC)'), default=False)
     is_online = models.BooleanField(_('est en ligne'), default=False)
     kyc_status = models.CharField(
@@ -57,6 +66,12 @@ class User(AbstractUser):
         _('domaine / compétences agent'),
         max_length=255,
         blank=True,
+    )
+    expertises = models.CharField(
+        _('expertises spécifiques agent'),
+        max_length=500,
+        blank=True,
+        help_text=_('Liste séparée par des virgules'),
     )
 
     USERNAME_FIELD = 'phone_number'
@@ -122,7 +137,7 @@ class AgentProfile(models.Model):
     kyc_status = models.CharField(
         max_length=20,
         choices=AgentKYCStatus.choices,
-        default=AgentKYCStatus.PENDING,
+        default=AgentKYCStatus.NONE,
     )
     id_card_photo = models.ImageField(
         _('photo recto pièce d\'identité'),
@@ -136,6 +151,42 @@ class AgentProfile(models.Model):
         blank=True,
         null=True,
     )
+    bio = models.TextField(
+        _('biographie agent'),
+        blank=True,
+        null=True,
+        help_text=_('Présentation publique de l\'agent'),
+    )
+    rejection_reason = models.TextField(_('motif rejet KYC'), blank=True, default='')
+    agent_code = models.CharField(
+        _('identifiant agent'),
+        max_length=16,
+        blank=True,
+        default='',
+        unique=True,
+        db_index=True,
+        help_text=_('Format AGT-00001'),
+    )
+    is_internal = models.BooleanField(
+        _('agent interne'),
+        default=False,
+        help_text=_('Priorité suggestions client + badge certifié'),
+    )
+    badge_status = models.CharField(
+        _('statut badge professionnel'),
+        max_length=20,
+        choices=AgentBadgeStatus.choices,
+        default=AgentBadgeStatus.NONE,
+    )
+    badge_photo = models.ImageField(
+        _('photo badge professionnel'),
+        upload_to='badges/photos/',
+        blank=True,
+        null=True,
+    )
+    badge_requested_at = models.DateTimeField(null=True, blank=True)
+    badge_approved_at = models.DateTimeField(null=True, blank=True)
+    badge_rejection_reason = models.TextField(_('motif rejet badge'), blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -145,3 +196,181 @@ class AgentProfile(models.Model):
 
     def __str__(self):
         return f"AgentProfile({self.user_id}, kyc={self.kyc_status})"
+
+
+class Influencer(models.Model):
+    """Partenaire influenceur — code promo et commission sur les missions."""
+
+    name = models.CharField(_('nom'), max_length=150)
+    code_promo = models.CharField(
+        _('code promo'),
+        max_length=50,
+        unique=True,
+        db_index=True,
+    )
+    commission_rate = models.DecimalField(
+        _('taux de commission'),
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.02'),
+        help_text=_('Part du montant brut mission (ex: 0.02 = 2 %)'),
+    )
+    duration_years = models.PositiveIntegerField(
+        _('durée du contrat (années)'),
+        default=2,
+    )
+    earnings_balance = models.DecimalField(
+        _('solde commissions'),
+        max_digits=12,
+        decimal_places=0,
+        default=0,
+    )
+    referral_slug = models.SlugField(
+        _('slug parrainage'),
+        max_length=80,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text=_('Deep link ex: INFLU_BENIN → fonaco.app/join/INFLU_BENIN'),
+    )
+    portal_user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='influencer_portal',
+        verbose_name=_('compte portail'),
+    )
+    contract_started_at = models.DateField(
+        _('début contrat'),
+        null=True,
+        blank=True,
+        help_text=_('Par défaut : date de création'),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('influenceur')
+        verbose_name_plural = _('influenceurs')
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.referral_slug and self.code_promo:
+            from django.utils.text import slugify
+            self.referral_slug = slugify(self.code_promo).upper().replace('-', '_')[:80]
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.name} ({self.code_promo})'
+
+    def is_contract_active(self, linked_at) -> bool:
+        if not linked_at:
+            return False
+        expiry = linked_at + timezone.timedelta(days=int(self.duration_years) * 365)
+        return timezone.now() <= expiry
+
+    @property
+    def contract_start(self):
+        return self.contract_started_at or (self.created_at.date() if self.created_at else None)
+
+    @property
+    def contract_end(self):
+        start = self.contract_start
+        if not start:
+            return None
+        return start + timezone.timedelta(days=int(self.duration_years) * 365)
+
+
+class InfluencerWithdrawalStatus(models.TextChoices):
+    PENDING = 'PENDING', _('En attente')
+    APPROVED = 'APPROVED', _('Approuvé')
+    REJECTED = 'REJECTED', _('Rejeté')
+
+
+class InfluencerWithdrawalRequest(models.Model):
+    """Demande de retrait commission influenceur."""
+
+    influencer = models.ForeignKey(
+        Influencer,
+        on_delete=models.CASCADE,
+        related_name='withdrawal_requests',
+    )
+    amount = models.DecimalField(_('montant'), max_digits=12, decimal_places=0)
+    status = models.CharField(
+        max_length=20,
+        choices=InfluencerWithdrawalStatus.choices,
+        default=InfluencerWithdrawalStatus.PENDING,
+        db_index=True,
+    )
+    note = models.TextField(_('note influenceur'), blank=True)
+    proof_file = models.FileField(
+        _('preuve de versement'),
+        upload_to='influencer/payout_proofs/',
+        blank=True,
+        null=True,
+    )
+    admin_note = models.TextField(_('note admin'), blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_influencer_withdrawals',
+    )
+
+    class Meta:
+        ordering = ['-requested_at']
+        verbose_name = _('demande retrait influenceur')
+        verbose_name_plural = _('demandes retrait influenceurs')
+
+    def __str__(self):
+        return f'Retrait {self.amount} FCFA — {self.influencer.code_promo} ({self.status})'
+
+
+class ClientProfile(models.Model):
+    """Profil client (affiliation influenceur, préférences)."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='client_profile',
+    )
+    influencer = models.ForeignKey(
+        Influencer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='clients',
+    )
+    influencer_linked_at = models.DateTimeField(
+        _('date liaison influenceur'),
+        null=True,
+        blank=True,
+    )
+    referral_code_cache = models.CharField(
+        _('code parrainage (deep link)'),
+        max_length=80,
+        blank=True,
+        default='',
+        help_text=_('Code influenceur capturé via deep link avant inscription'),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('profil client')
+        verbose_name_plural = _('profils clients')
+
+    def __str__(self):
+        return f'ClientProfile({self.user_id})'
+
+    @property
+    def active_influencer(self):
+        if not self.influencer_id:
+            return None
+        linked = self.influencer_linked_at or self.created_at
+        if self.influencer.is_contract_active(linked):
+            return self.influencer
+        return None

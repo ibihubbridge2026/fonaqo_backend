@@ -1,0 +1,131 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Utilisateurs{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Utilisateurs</h2>
+    <p>Agents, artisans experts et clients</p>
+  </div>
+</div>
+
+<div data-tabs>
+  <div class="fq-tabs">
+    <button type="button" data-tab-btn="agents" class="fq-tab active">Agents</button>
+    <button type="button" data-tab-btn="artisans" class="fq-tab">Artisans experts</button>
+    <button type="button" data-tab-btn="clients" class="fq-tab">Clients</button>
+  </div>
+
+  <div data-tab-panel="agents" class="fq-card overflow-hidden">
+    <div class="fq-table-wrap custom-scrollbar">
+      <table class="fq-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Username</th><th>Nom</th><th>Téléphone</th><th>Compétences</th><th>KYC</th><th class="text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for profile in agents %}
+          <tr data-agent-row="{{ profile.id }}"
+            data-name="{{ profile.user.get_full_name|default:profile.user.username }}"
+            data-username="@{{ profile.user.username }}"
+            data-id-card="{% if profile.id_card_photo %}{{ profile.id_card_photo.url }}{% endif %}"
+            data-selfie="{% if profile.selfie_photo %}{{ profile.selfie_photo.url }}{% endif %}">
+            <td class="mono text-xs">{{ profile.id }}</td>
+            <td class="mono font-semibold">@{{ profile.user.username }}</td>
+            <td>{{ profile.user.get_full_name|default:"—" }}</td>
+            <td class="mono">{{ profile.user.phone_number|default:"—" }}</td>
+            <td>
+              {% with services=profile.user.offered_services.all %}
+                {% if services %}{% for svc in services|slice:":2" %}<span class="fq-badge fq-badge-default mr-1">{{ svc.title|default:"Service" }}</span>{% endfor %}
+                {% else %}—{% endif %}
+              {% endwith %}
+            </td>
+            <td>
+              <span data-kyc-badge class="fq-badge {% if profile.kyc_status == 'APPROVED' %}fq-badge-completed{% elif profile.kyc_status == 'REJECTED' %}fq-badge-cancelled{% else %}fq-badge-pending{% endif %}">
+                {% if profile.kyc_status == 'APPROVED' %}Approuvé{% elif profile.kyc_status == 'REJECTED' %}Rejeté{% else %}En attente{% endif %}
+              </span>
+            </td>
+            <td class="text-right space-x-2">
+              {% if profile.kyc_status == 'PENDING' %}
+              <button type="button" data-kyc-open="{{ profile.id }}" class="fq-btn fq-btn-ghost fq-btn-sm">Voir KYC</button>
+              {% endif %}
+              {% if profile.kyc_status == 'APPROVED' and not profile.user.is_verified %}
+              <button type="button" data-admin-action="promote-artisan" data-user-id="{{ profile.user.id }}" data-username="@{{ profile.user.username }}" class="fq-btn fq-btn-primary fq-btn-sm">→ Artisan</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7"><div class="fq-empty">Aucun agent.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div data-tab-panel="artisans" class="hidden fq-card overflow-hidden">
+    <div class="fq-table-wrap">
+      <table class="fq-table">
+        <thead><tr><th>Expert</th><th>Score</th><th>Statut</th></tr></thead>
+        <tbody>
+          {% for profile in artisans %}
+          <tr>
+            <td class="font-medium">@{{ profile.user.username }}</td>
+            <td class="mono">{{ profile.user.reliability_score|default:"—" }}</td>
+            <td><span class="fq-badge fq-badge-completed">ARTISAN VÉRIFIÉ</span></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3"><div class="fq-empty">Aucun artisan expert.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div data-tab-panel="clients" class="hidden fq-card overflow-hidden">
+    <div class="fq-table-wrap">
+      <table class="fq-table">
+        <thead><tr><th>ID</th><th>Téléphone</th><th>Parrainage</th><th>Inscrit le</th></tr></thead>
+        <tbody>
+          {% for cp in clients %}
+          <tr>
+            <td class="mono">{{ cp.user.id }}</td>
+            <td>{{ cp.user.phone_number }}</td>
+            <td>{% if cp.influencer %}<span class="fq-badge fq-badge-default">{{ cp.influencer.code_promo }}</span>{% else %}—{% endif %}</td>
+            <td class="mono text-xs">{{ cp.created_at|date:"d/m/Y H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4"><div class="fq-empty">Aucun client.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="kyc-drawer-overlay" class="fq-drawer-overlay hidden"></div>
+<aside id="kyc-drawer" class="fq-drawer">
+  <div class="flex items-center justify-between p-6 border-b border-[var(--fq-border-light)]">
+    <div>
+      <h3 class="fq-section-title" id="kyc-agent-name">Agent</h3>
+      <p class="text-sm text-[var(--fq-muted)]" id="kyc-agent-username">@username</p>
+    </div>
+    <button type="button" data-kyc-close class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+  </div>
+  <input type="hidden" id="kyc-profile-id" value=""/>
+  <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+    <div>
+      <p class="fq-label">Pièce d'identité</p>
+      <img id="kyc-id-preview" alt="CNI" class="w-full rounded-xl border border-[var(--fq-border)] min-h-[160px] object-contain bg-[var(--fq-bg)]"/>
+    </div>
+    <div>
+      <p class="fq-label">Selfie</p>
+      <img id="kyc-selfie-preview" alt="Selfie" class="w-full rounded-xl border border-[var(--fq-border)] min-h-[160px] object-contain bg-[var(--fq-bg)]"/>
+    </div>
+  </div>
+  <div class="p-6 border-t grid grid-cols-2 gap-3">
+    <button type="button" data-kyc-action="reject" class="fq-btn fq-btn-secondary">Rejeter</button>
+    <button type="button" data-kyc-action="approve" class="fq-btn fq-btn-primary">Approuver KYC</button>
+  </div>
+</aside>
+{% endblock %}

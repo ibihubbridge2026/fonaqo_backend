@@ -1,0 +1,1 @@
+Dossier KYC à corriger — {{ user.first_name|default:user.username }}.{% if reason %} Motif: {{ reason }}.{% endif %} Resoumettez vos documents dans l'application.

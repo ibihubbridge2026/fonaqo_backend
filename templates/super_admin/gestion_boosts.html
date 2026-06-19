@@ -1,0 +1,66 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Boost{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Forfaits Boost</h2><p>Visibilité et plans actifs</p></div>
+  <button type="button" data-admin-action="refresh-boosts" class="fq-btn fq-btn-secondary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Actualiser</button>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+  {% for plan in plans %}
+  <div class="fq-stat-card">
+    <div class="fq-stat-icon">{% include "super_admin/partials/icon.html" with name="rocket" class="w-5 h-5" %}</div>
+    <h3 class="font-bold text-lg">{{ plan.name }}</h3>
+    <p class="fq-stat-value" style="font-size:22px">{{ plan.price }} <span class="text-sm font-normal text-[var(--fq-muted)]">FCFA</span></p>
+    <p class="text-sm text-[var(--fq-muted)]">{{ plan.duration_display }} · ×{{ plan.visibility_multiplier }}</p>
+    <span class="fq-badge {% if plan.is_active %}fq-badge-completed{% else %}fq-badge-default{% endif %} w-fit">{{ plan.is_active|yesno:"Actif,Inactif" }}</span>
+    <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" class="fq-btn fq-btn-secondary fq-btn-sm w-full mt-2">Modifier</button>
+  </div>
+  {% empty %}
+  <div class="fq-empty col-span-3">Aucun plan boost.</div>
+  {% endfor %}
+</div>
+
+<section class="fq-card overflow-hidden mb-8">
+  <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Boosts actifs</h3></div>
+  <div class="fq-table-wrap">
+    <table class="fq-table">
+      <thead><tr><th>Agent</th><th>Plan</th><th>Expire</th><th>Statut</th><th class="text-right">Actions</th></tr></thead>
+      <tbody>
+        {% for boost in active_boosts %}
+        <tr>
+          <td class="font-medium">@{{ boost.agent.username }}</td>
+          <td>{{ boost.plan.name }}</td>
+          <td class="mono text-xs">{{ boost.expires_at|date:"d/m/Y H:i" }}</td>
+          <td><span class="fq-badge fq-badge-completed">{{ boost.status|upper }}</span></td>
+          <td class="text-right"><button type="button" data-admin-action="cancel-boost" data-boost-id="{{ boost.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-[var(--fq-danger)]">Annuler</button></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="fq-empty">Aucun boost actif.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="fq-card overflow-hidden">
+  <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Historique</h3></div>
+  <div class="fq-table-wrap max-h-64">
+    <table class="fq-table">
+      <tbody>
+        {% for boost in boost_history %}
+        <tr class="text-[var(--fq-muted)]">
+          <td>@{{ boost.agent.username }}</td>
+          <td>{{ boost.plan.name }}</td>
+          <td><span class="fq-badge fq-badge-default">{{ boost.status }}</span></td>
+          <td class="mono text-xs">{{ boost.created_at|date:"d/m/Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4"><div class="fq-empty">Historique vide.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

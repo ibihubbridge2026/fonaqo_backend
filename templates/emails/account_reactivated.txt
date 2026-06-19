@@ -1,0 +1,1 @@
+Compte réactivé — {{ user.first_name|default:user.username }}, vous pouvez vous reconnecter à FONACO.

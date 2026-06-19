@@ -1,0 +1,199 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}FONAQO{% endblock %} · BackOffice</title>
+  <link rel="icon" href="{% static 'super_admin/fonaco-logo.png' %}" type="image/png"/>
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="{% static 'super_admin/admin.css' %}?v=20250624"/>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            fq: { yellow: '#FFD100', black: '#0B0B0B', bg: '#F8FAFC' },
+          },
+        },
+      },
+    };
+  </script>
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="fq-admin" data-admin-page="{{ active_nav|default:'' }}" data-fq-build="20250624">
+  <div class="fq-overlay" id="admin-sidebar-overlay" aria-hidden="true"></div>
+
+  <div class="fq-shell">
+    <!-- Sidebar -->
+    <aside id="admin-sidebar" class="fq-sidebar" aria-label="Navigation principale">
+      <div class="fq-brand">
+        <img src="{% static 'super_admin/fonaco-logo.png' %}" alt="FONAQO" class="fq-brand-logo"/>
+        <div class="fq-brand-text">
+          <h1>FONAQO</h1>
+          <p>Ta mission, notre action.</p>
+        </div>
+      </div>
+
+      <nav class="fq-nav custom-scrollbar">
+        {% with nav=active_nav|default:"" %}
+        <a href="{% url 'admin-dashboard' %}" class="fq-nav-link {% if nav == 'dashboard' %}active{% endif %}" title="Dashboard">
+          {% include "super_admin/partials/icon.html" with name="dashboard" %}
+          <span class="fq-nav-label">Dashboard</span>
+        </a>
+
+        {% if is_super_admin or is_manager %}
+        <div class="fq-nav-group {% if nav == 'agents' or nav == 'clients' %}open{% endif %}" data-nav-group="users">
+          <button type="button" class="fq-nav-link fq-nav-toggle {% if nav == 'agents' or nav == 'clients' %}active{% endif %}" aria-expanded="{% if nav == 'agents' or nav == 'clients' %}true{% else %}false{% endif %}">
+            {% include "super_admin/partials/icon.html" with name="users" %}
+            <span class="fq-nav-label">Utilisateurs</span>
+            <svg class="fq-nav-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"/></svg>
+          </button>
+          <div class="fq-nav-sub">
+            <a href="{% url 'admin-agents' %}" class="fq-nav-sublink {% if nav == 'agents' %}active{% endif %}">Agents</a>
+            <a href="{% url 'admin-clients' %}" class="fq-nav-sublink {% if nav == 'clients' %}active{% endif %}">Clients</a>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if is_super_admin %}
+        <a href="{% url 'admin-artisans' %}" class="fq-nav-link {% if nav == 'artisans' %}active{% endif %}" title="Artisans experts">
+          {% include "super_admin/partials/icon.html" with name="boost" %}
+          <span class="fq-nav-label">Artisans</span>
+        </a>
+        {% endif %}
+
+        <a href="{% url 'admin-missions' %}" class="fq-nav-link {% if nav == 'missions' %}active{% endif %}" title="Missions">
+          {% include "super_admin/partials/icon.html" with name="missions" %}
+          <span class="fq-nav-label">Missions</span>
+        </a>
+        <a href="{% url 'admin-transactions' %}" class="fq-nav-link {% if nav == 'transactions' %}active{% endif %}" title="Transactions">
+          {% include "super_admin/partials/icon.html" with name="transactions" %}
+          <span class="fq-nav-label">Transactions</span>
+        </a>
+        {% if is_super_admin %}
+        <a href="{% url 'admin-wallet' %}" class="fq-nav-link {% if nav == 'wallet' %}active{% endif %}" title="Wallet plateforme">
+          {% include "super_admin/partials/icon.html" with name="fee" %}
+          <span class="fq-nav-label">Wallet</span>
+        </a>
+        {% endif %}
+
+        <p class="fq-nav-section">Croissance</p>
+        <a href="{% url 'admin-influencers' %}" class="fq-nav-link {% if nav == 'influencers' %}active{% endif %}" title="Influenceurs">
+          {% include "super_admin/partials/icon.html" with name="influencer" %}
+          <span class="fq-nav-label">Influenceurs</span>
+        </a>
+        {% if is_super_admin %}
+        <a href="{% url 'admin-boosts' %}" class="fq-nav-link {% if nav == 'boosts' %}active{% endif %}" title="Boost">
+          {% include "super_admin/partials/icon.html" with name="rocket" %}
+          <span class="fq-nav-label">Boost</span>
+        </a>
+        {% endif %}
+
+        <p class="fq-nav-section">Système</p>
+        <a href="{% url 'admin-operations' %}" class="fq-nav-link {% if nav == 'operations' %}active{% endif %}" title="Notifications">
+          {% include "super_admin/partials/icon.html" with name="bell" %}
+          <span class="fq-nav-label">Notifications</span>
+          <span class="fq-nav-badge" id="sidebar-notif-badge" hidden>0</span>
+        </a>
+        {% if is_super_admin %}
+        <a href="{% url 'admin-config' %}" class="fq-nav-link {% if nav == 'config' %}active{% endif %}" title="Configuration">
+          {% include "super_admin/partials/icon.html" with name="config" %}
+          <span class="fq-nav-label">Configuration</span>
+        </a>
+        <a href="{% url 'admin-staff' %}" class="fq-nav-link {% if nav == 'staff' %}active{% endif %}" title="Équipe Staff">
+          {% include "super_admin/partials/icon.html" with name="users" %}
+          <span class="fq-nav-label">Staff</span>
+        </a>
+        <a href="{% url 'admin-audit' %}" class="fq-nav-link {% if nav == 'audit' %}active{% endif %}" title="Journal d'activité">
+          {% include "super_admin/partials/icon.html" with name="audit" %}
+          <span class="fq-nav-label">Activité</span>
+        </a>
+        <a href="{% url 'admin-password-resets' %}" class="fq-nav-link {% if nav == 'password_resets' %}active{% endif %}" title="Réinitialisation MDP">
+          {% include "super_admin/partials/icon.html" with name="config" %}
+          <span class="fq-nav-label">Reset MDP</span>
+        </a>
+        {% endif %}
+        <p class="fq-nav-section">Compte</p>
+        <a href="{% url 'admin-profile' %}" class="fq-nav-link {% if nav == 'profile' %}active{% endif %}" title="Mon profil">
+          {% include "super_admin/partials/icon.html" with name="users" %}
+          <span class="fq-nav-label">Mon profil</span>
+        </a>
+        {% endwith %}
+      </nav>
+
+      <div class="fq-profile">
+        <a href="{% url 'admin-profile' %}" class="fq-profile-card fq-profile-card-link {% if nav == 'profile' %}active{% endif %}" title="Mon profil">
+          <div class="fq-avatar fq-avatar-online">
+            {{ request.user.first_name|first|default:"S" }}{{ request.user.last_name|first|default:"A" }}
+          </div>
+          <div class="fq-profile-info min-w-0 flex-1">
+            <p class="font-semibold text-sm truncate">{{ request.user.get_full_name|default:request.user.username }}</p>
+            <p class="text-xs text-[var(--fq-muted)] truncate">{{ staff_role_label|default:"Staff" }}</p>
+          </div>
+        </a>
+        <form method="post" action="{% url 'admin-portal-logout' %}" class="mt-3">
+          {% csrf_token %}
+          <button type="submit" class="fq-btn fq-btn-ghost fq-btn-sm w-full justify-start gap-2">
+            {% include "super_admin/partials/icon.html" with name="logout" class="w-4 h-4" %}
+            <span class="fq-logout-text">Déconnexion</span>
+          </button>
+        </form>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="fq-main-wrap">
+      <header class="fq-navbar" role="banner">
+        <button type="button" class="fq-icon-btn lg:hidden" data-sidebar-toggle aria-label="Menu">
+          {% include "super_admin/partials/icon.html" with name="menu" class="w-5 h-5" %}
+        </button>
+        <button type="button" class="fq-icon-btn hidden lg:flex" data-sidebar-collapse aria-label="Réduire le menu">
+          {% include "super_admin/partials/icon.html" with name="menu" class="w-5 h-5" %}
+        </button>
+
+        <div class="fq-search hidden sm:flex">
+          {% include "super_admin/partials/icon.html" with name="search" class="w-4 h-4 text-[var(--fq-muted)]" %}
+          <input id="global-admin-search" type="search" placeholder="Rechercher (mission, utilisateur, agent…)" aria-label="Recherche globale"/>
+        </div>
+
+        <div class="fq-datetime" aria-live="polite">
+          <time id="fq-clock-date">—</time>
+          <span id="fq-clock-time">—</span>
+        </div>
+
+        <div class="fq-status-pill">Système opérationnel</div>
+
+        <div class="fq-navbar-actions">
+          <button type="button" class="fq-icon-btn" id="admin-notif-btn" aria-label="Notifications">
+            {% include "super_admin/partials/icon.html" with name="bell" class="w-5 h-5" %}
+            <span class="fq-notif-count hidden" id="navbar-notif-count">0</span>
+          </button>
+          <a href="{% url 'admin-profile' %}" class="fq-avatar fq-avatar-sm fq-avatar-online hidden sm:flex fq-avatar-link" title="Mon profil — {{ request.user.get_full_name }}">
+            {{ request.user.first_name|first|default:"S" }}{{ request.user.last_name|first|default:"A" }}
+          </a>
+        </div>
+      </header>
+
+      <div id="admin-notif-panel" class="fq-notif-panel hidden" style="position:fixed;top:72px;right:20px;">
+        <div class="fq-notif-panel-header">Centre de notifications</div>
+        <ul id="admin-notif-list" class="text-sm"></ul>
+      </div>
+
+      <main class="fq-content">
+        {% block content %}{% endblock %}
+        <footer class="fq-footer">
+          <span>© {% now "Y" %} FONAQO. Tous droits réservés.</span>
+          <span>Version 2.0.0 · BackOffice Staff</span>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  {% include "super_admin/_admin_modals.html" %}
+  <div id="admin-toast" class="fq-toast hidden" role="alert"></div>
+  <script src="{% static 'super_admin/admin.js' %}?v=20250624"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

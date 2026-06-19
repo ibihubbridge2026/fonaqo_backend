@@ -16,6 +16,11 @@ from .views import (
     agent_status_view,
     kyc_submit_view,
 )
+from .badge_views import (
+    agent_badge_download_view,
+    agent_badge_request_view,
+    agent_badge_status_view,
+)
 
 urlpatterns = [
     path('login/', login_view, name='login'),
@@ -31,5 +36,8 @@ urlpatterns = [
     path('update-phone/', update_phone_view, name='update-phone'),
     path('agent/status/', agent_status_view, name='agent-status'),
     path('kyc/submit/', kyc_submit_view, name='kyc-submit'),
+    path('agent/badge/', agent_badge_status_view, name='agent-badge-status'),
+    path('agent/badge/request/', agent_badge_request_view, name='agent-badge-request'),
+    path('agent/badge/download/', agent_badge_download_view, name='agent-badge-download'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
 ]

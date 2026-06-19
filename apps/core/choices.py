@@ -15,9 +15,18 @@ class MissionStatus(models.TextChoices):
 
 
 class AgentKYCStatus(models.TextChoices):
+    NONE = "NONE", _("Non soumis")
+    SUBMITTED = "SUBMITTED", _("Soumis")
     PENDING = "PENDING", _("En attente")
     APPROVED = "APPROVED", _("Approuve")
     REJECTED = "REJECTED", _("Rejete")
+
+
+class AgentBadgeStatus(models.TextChoices):
+    NONE = "NONE", _("Aucune demande")
+    PENDING = "PENDING", _("En attente validation")
+    APPROVED = "APPROVED", _("Badge approuvé")
+    REJECTED = "REJECTED", _("Demande rejetée")
 
 
 class TransactionStatus(models.TextChoices):
@@ -25,6 +34,12 @@ class TransactionStatus(models.TextChoices):
     COMPLETED = "COMPLETED", _("Completee")
     FAILED = "FAILED", _("Echouee")
     CANCELLED = "CANCELLED", _("Annulee")
+
+
+class PayoutRequestStatus(models.TextChoices):
+    PENDING = "PENDING", _("En attente")
+    COMPLETED = "COMPLETED", _("Valide")
+    REJECTED = "REJECTED", _("Rejete")
 
 
 class KYCStatus(models.TextChoices):

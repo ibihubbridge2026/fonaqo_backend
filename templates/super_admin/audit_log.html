@@ -1,0 +1,39 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Audit Logs{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div><h2>Journal d'audit</h2><p>Historique des actions SuperAdmin</p></div>
+  <button type="button" data-admin-action="refresh-audit" class="fq-btn fq-btn-secondary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Actualiser</button>
+</div>
+
+<div class="flex flex-col sm:flex-row gap-3 mb-6">
+  <input type="search" id="audit-search" placeholder="Filtrer admin, action, cible…" class="fq-search-field flex-1"/>
+  <select id="audit-filter" class="fq-input" style="width:auto;min-width:160px">
+    <option value="">Toutes les actions</option>
+    <option value="KYC">KYC</option>
+    <option value="MISSION">Mission</option>
+    <option value="DISPUTE">Litige</option>
+    <option value="PAYOUT">Payout</option>
+    <option value="CONFIG">Configuration</option>
+    <option value="BOOST">Boost</option>
+  </select>
+</div>
+
+<section class="fq-card overflow-hidden">
+  <div class="px-6 py-4 border-b flex justify-between items-center">
+    <h3 class="fq-section-title">Historique</h3>
+    <span id="audit-count" class="text-xs mono text-[var(--fq-muted)]">— entrées</span>
+  </div>
+  <div class="fq-table-wrap custom-scrollbar max-h-[70vh]">
+    <table class="fq-table">
+      <thead class="sticky top-0 z-10 bg-[var(--fq-bg)]">
+        <tr><th>Horodatage</th><th>Admin</th><th>Action</th><th>Cible</th><th>Détail</th></tr>
+      </thead>
+      <tbody id="audit-log-body">
+        <tr><td colspan="5" class="text-center py-12"><span class="fq-skeleton inline-block w-48 h-5"></span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

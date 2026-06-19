@@ -3,7 +3,7 @@ from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from simple_history.models import HistoricalRecords
-from apps.core.choices import TransactionStatus
+from apps.core.choices import PayoutRequestStatus, TransactionStatus
 
 class Wallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -86,3 +86,53 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.transaction_type} - {self.amount} FCFA"
+
+
+class PayoutRequest(models.Model):
+    """Demande de retrait agent — workflow staff (approve / reject)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name='payout_requests',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('Montant'))
+    payment_method = models.CharField(max_length=50, verbose_name=_('Opérateur MoMo'))
+    phone_number = models.CharField(max_length=20, verbose_name=_('Numéro de versement'))
+    status = models.CharField(
+        max_length=20,
+        choices=PayoutRequestStatus.choices,
+        default=PayoutRequestStatus.PENDING,
+        db_index=True,
+    )
+    ledger_transaction = models.OneToOneField(
+        Transaction,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payout_request',
+        help_text=_('Écriture comptable WITHDRAWAL créée à l\'approbation'),
+    )
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_payouts',
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('Demande de retrait')
+        verbose_name_plural = _('Demandes de retrait')
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'PayoutRequest {self.amount} FCFA — {self.status}'
