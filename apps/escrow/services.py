@@ -5,14 +5,22 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 
 from apps.core.choices import EscrowStatus, TransactionStatus
+from apps.core.services import (
+    PlatformConfigService,
+    SPLIT_AGENT_PCT_KEY,
+    SPLIT_PLATFORM_PCT_KEY,
+)
 from apps.wallets.models import Transaction, Wallet
 
 from .models import Escrow, EscrowSplitRecord
 
 User = get_user_model()
-PLATFORM_COMMISSION_RATE = Decimal('0.10')
 PLATFORM_USER_EMAIL = 'platform@fonaqo.system'
+RESERVE_USER_EMAIL = 'reserve@fonaqo.system'
 INFLUENCER_DEFAULT_RATE = Decimal('0.02')
+
+# Legacy alias kept for backward compat
+PLATFORM_COMMISSION_RATE = Decimal('0.10')
 
 
 def _mission_labor_cost(mission) -> Decimal:
@@ -38,13 +46,13 @@ def _get_active_client_influencer(client):
     return profile.active_influencer
 
 
-def _get_platform_wallet():
-    """Portefeuille système FONACO pour les commissions plateforme."""
-    platform_user, created = User.objects.get_or_create(
-        email=PLATFORM_USER_EMAIL,
+def _get_system_wallet(email: str, username: str, phone: str) -> Wallet:
+    """Crée (si besoin) et retourne le portefeuille d'un compte système."""
+    user, created = User.objects.get_or_create(
+        email=email,
         defaults={
-            'username': 'fonaqo_platform',
-            'phone_number': '+2299999990001',
+            'username': username,
+            'phone_number': phone,
             'is_staff': True,
             'is_active': True,
             'is_client': False,
@@ -53,10 +61,24 @@ def _get_platform_wallet():
         },
     )
     if created:
-        platform_user.set_unusable_password()
-        platform_user.save(update_fields=['password'])
-    wallet, _ = Wallet.objects.get_or_create(user=platform_user)
+        user.set_unusable_password()
+        user.save(update_fields=['password'])
+    wallet, _ = Wallet.objects.get_or_create(user=user)
     return wallet
+
+
+def _get_platform_wallet() -> Wallet:
+    """Portefeuille revenus plateforme FONACO (10 %)."""
+    return _get_system_wallet(
+        PLATFORM_USER_EMAIL, 'fonaqo_platform', '+2299999990001',
+    )
+
+
+def _get_reserve_wallet() -> Wallet:
+    """Portefeuille réserve technique / assurance FONACO (2 %)."""
+    return _get_system_wallet(
+        RESERVE_USER_EMAIL, 'fonaqo_reserve', '+2299999990002',
+    )
 
 
 class EscrowService:
@@ -194,22 +216,28 @@ class EscrowService:
             raise ValueError("Solde séquestre client insuffisant")
 
         gross = Decimal(escrow.amount).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        commission = (gross * PLATFORM_COMMISSION_RATE).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP,
-        )
-        net_agent = gross - commission
 
+        # --- Répartition configurable (défaut : 88 % / 10 % / 2 %) ---
+        agent_pct = (
+            PlatformConfigService.get_decimal(SPLIT_AGENT_PCT_KEY, '88') / Decimal('100')
+        )
+        platform_pct = (
+            PlatformConfigService.get_decimal(SPLIT_PLATFORM_PCT_KEY, '10') / Decimal('100')
+        )
+        # La part restante (2 %) va à la réserve technique/assurance
+        net_agent = (gross * agent_pct).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        platform_base = (gross * platform_pct).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        reserve_share = gross - net_agent - platform_base  # assure que total = 100 %
+
+        # Si influenceur actif, sa commission est prélevée sur la part plateforme
         influencer = _get_active_client_influencer(mission.client)
         influencer_share = Decimal('0')
-        platform_share = commission
         if influencer:
             rate = Decimal(str(influencer.commission_rate or INFLUENCER_DEFAULT_RATE))
-            influencer_share = (gross * rate).quantize(
-                Decimal('0.01'), rounding=ROUND_HALF_UP,
-            )
-            platform_share = commission - influencer_share
-            if platform_share < 0:
-                platform_share = Decimal('0')
+            influencer_share = (gross * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            platform_share = max(Decimal('0'), platform_base - influencer_share)
+        else:
+            platform_share = platform_base
 
         client_wallet.escrow_balance -= gross
         client_wallet.save(update_fields=["escrow_balance", "updated_at"])
@@ -224,6 +252,12 @@ class EscrowService:
         platform_wallet.balance += platform_share
         platform_wallet.save(update_fields=["balance", "updated_at"])
 
+        reserve_wallet = Wallet.objects.select_for_update().get(
+            pk=_get_reserve_wallet().pk,
+        )
+        reserve_wallet.balance += reserve_share
+        reserve_wallet.save(update_fields=["balance", "updated_at"])
+
         if influencer and influencer_share > 0:
             from apps.accounts.models import Influencer
             inf = Influencer.objects.select_for_update().get(pk=influencer.pk)
@@ -234,25 +268,33 @@ class EscrowService:
         escrow.released_at = timezone.now()
         escrow.save(update_fields=["status", "released_at"])
 
+        agent_pct_display = int(agent_pct * 100)
         Transaction.objects.create(
             wallet=agent_wallet,
             mission=mission,
             amount=net_agent,
             transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
             status=TransactionStatus.COMPLETED,
-            description=(
-                f"Libération séquestre mission {mission.id} "
-                f"(net 90 % après commission 10 %)"
-            ),
+            description=f"Paiement mission {mission.id} ({agent_pct_display} %)",
         )
-        Transaction.objects.create(
-            wallet=platform_wallet,
-            mission=mission,
-            amount=platform_share,
-            transaction_type=Transaction.TransactionType.INSURANCE_FEE,
-            status=TransactionStatus.COMPLETED,
-            description=f"Commission FONACO {platform_share} mission {mission.id}",
-        )
+        if platform_share > 0:
+            Transaction.objects.create(
+                wallet=platform_wallet,
+                mission=mission,
+                amount=platform_share,
+                transaction_type=Transaction.TransactionType.INSURANCE_FEE,
+                status=TransactionStatus.COMPLETED,
+                description=f"Revenus plateforme mission {mission.id}",
+            )
+        if reserve_share > 0:
+            Transaction.objects.create(
+                wallet=reserve_wallet,
+                mission=mission,
+                amount=reserve_share,
+                transaction_type=Transaction.TransactionType.INSURANCE_FEE,
+                status=TransactionStatus.COMPLETED,
+                description=f"Réserve technique mission {mission.id}",
+            )
 
         EscrowSplitRecord.objects.create(
             mission=mission,
@@ -266,6 +308,13 @@ class EscrowService:
                 beneficiary_type=EscrowSplitRecord.BeneficiaryType.PLATFORM,
                 amount_fcfa=platform_share,
                 beneficiary_user=platform_user,
+            )
+        if reserve_share > 0:
+            EscrowSplitRecord.objects.create(
+                mission=mission,
+                beneficiary_type=EscrowSplitRecord.BeneficiaryType.PLATFORM,
+                amount_fcfa=reserve_share,
+                beneficiary_user=reserve_wallet.user,
             )
         if influencer and influencer_share > 0:
             EscrowSplitRecord.objects.create(
@@ -390,8 +439,10 @@ class EscrowService:
             raise ValueError("Les fonds ne sont pas en séquestre")
 
         amount = Decimal(escrow.amount)
-        agent_share = (amount * compensation_rate).quantize(Decimal("0.01"))
-        client_share = amount - agent_share
+        # Pénalité 20 % = 15 % agent + 5 % FONACO. Client récupère 80 %.
+        fonaco_penalty = (amount * Decimal('0.05')).quantize(Decimal('0.01'))
+        agent_share = (amount * Decimal('0.15')).quantize(Decimal('0.01'))
+        client_share = amount - fonaco_penalty - agent_share
 
         client_wallet = Wallet.objects.select_for_update().get(user=mission.client)
         agent_wallet = Wallet.objects.select_for_update().get(user=mission.agent)
@@ -406,6 +457,12 @@ class EscrowService:
         agent_wallet.balance += agent_share
         agent_wallet.save(update_fields=["balance", "updated_at"])
 
+        platform_wallet = Wallet.objects.select_for_update().get(
+            pk=_get_platform_wallet().pk,
+        )
+        platform_wallet.balance += fonaco_penalty
+        platform_wallet.save(update_fields=["balance", "updated_at"])
+
         escrow.status = EscrowStatus.REFUNDED
         escrow.save(update_fields=["status"])
 
@@ -415,7 +472,7 @@ class EscrowService:
             amount=agent_share,
             transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
             status=TransactionStatus.COMPLETED,
-            description=f"Dédommagement annulation (20 %) mission {mission.id}",
+            description="Indemnisation pour annulation de mission",
         )
         Transaction.objects.create(
             wallet=client_wallet,
@@ -423,8 +480,17 @@ class EscrowService:
             amount=client_share,
             transaction_type=Transaction.TransactionType.ESCROW_RELEASE,
             status=TransactionStatus.COMPLETED,
-            description=f"Remboursement annulation (80 %) mission {mission.id}",
+            description=f"Remboursement annulation mission {mission.id}",
         )
+        if fonaco_penalty > 0:
+            Transaction.objects.create(
+                wallet=platform_wallet,
+                mission=mission,
+                amount=fonaco_penalty,
+                transaction_type=Transaction.TransactionType.INSURANCE_FEE,
+                status=TransactionStatus.COMPLETED,
+                description=f"Frais administratifs annulation mission {mission.id}",
+            )
         return escrow
 
     @staticmethod

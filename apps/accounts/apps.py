@@ -8,3 +8,5 @@ class AccountsConfig(AppConfig):
 
     def ready(self):
         import apps.accounts.signals
+        import apps.accounts.ranking_signals
+        import apps.accounts.loyalty_signals

@@ -50,6 +50,7 @@ class Transaction(models.Model):
         REFERRAL_BONUS = 'REFERRAL_BONUS', _('Bonus Parrainage')
         INSURANCE_FEE = 'INSURANCE_FEE', _('Frais Assurance')
         TRANSFER = 'TRANSFER', _('Transfert')
+        BADGE_FEE = 'BADGE_FEE', _('Badge Professionnel')
         
     mission = models.ForeignKey('missions.Mission', on_delete=models.SET_NULL, null=True, blank=True)    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

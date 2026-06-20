@@ -27,8 +27,12 @@ class VitrineAgentPublicView(View):
     """Page vitrine publique — profil agent (scan QR badge)."""
 
     def get(self, request, agent_id):
+        from decimal import Decimal
+        from django.db.models import Sum
+
         from apps.accounts.models import AgentProfile
-        from apps.core.choices import MissionStatus
+        from apps.core.choices import AgentBadgeStatus, MissionStatus
+        from apps.escrow.models import EscrowSplitRecord
         from apps.missions.models import Mission
         from django.contrib.auth import get_user_model
 
@@ -36,23 +40,27 @@ class VitrineAgentPublicView(View):
         user = get_object_or_404(User, pk=agent_id, is_agent=True)
         profile, _ = AgentProfile.objects.get_or_create(user=user)
 
-        completed = Mission.objects.filter(
-            agent=user, status=MissionStatus.COMPLETED,
-        ).count()
-        reviews = Mission.objects.filter(
-            agent=user,
-            status=MissionStatus.COMPLETED,
-            client_rating__isnull=False,
-        ).order_by('-updated_at')[:10]
+        completed_qs = Mission.objects.filter(agent=user, status=MissionStatus.COMPLETED)
+        completed = completed_qs.count()
 
-        ratings = [m.client_rating for m in reviews if m.client_rating]
-        avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else None
+        # Montant cumulé encaissé (part agent dans EscrowSplitRecord)
+        total_earnings_agg = EscrowSplitRecord.objects.filter(
+            beneficiary_user=user,
+            beneficiary_type=EscrowSplitRecord.BeneficiaryType.AGENT,
+        ).aggregate(total=Sum('amount_fcfa'))
+        total_earnings = total_earnings_agg['total'] or Decimal('0')
+
+        # Note moyenne depuis le nouveau système de notation (profile.average_rating)
+        avg_rating = profile.average_rating if profile.average_rating > 0 else None
 
         return render(request, 'vitrine/agent_public.html', {
             'agent': user,
             'profile': profile,
             'completed_missions': completed,
+            'total_earnings': total_earnings,
             'avg_rating': avg_rating,
-            'reviews': reviews,
-            'is_certified': profile.is_internal or profile.badge_status == 'APPROVED',
+            'ratings_count': profile.ratings_count,
+            'has_badge': profile.badge_status == AgentBadgeStatus.APPROVED,
+            'is_internal': profile.is_internal,
+            'is_certified': profile.badge_status == AgentBadgeStatus.APPROVED,
         })

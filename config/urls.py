@@ -30,6 +30,7 @@ api_v1_patterns = [
     path('disputes/', include('apps.disputes.urls')),
     path('statistics/', include('apps.statistics.urls')),
     path('leboncoin/', include('apps.leboncoin.urls')),
+    path('ratings/', include('apps.ratings.urls')),
     path('core/', include('apps.core.api_urls')),
     path('config/', include('apps.core.config_urls')),
     path('staff/', include('apps.core.staff_urls')),

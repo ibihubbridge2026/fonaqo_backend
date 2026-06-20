@@ -128,12 +128,50 @@ def _agent_completed_missions_count(user):
 
 
 def _agent_mission_capacity(user):
-    """Limite de missions simultanées selon profil agent."""
+    """Limite de missions simultanées selon profil agent.
+
+    - Boost actif (payant ou Pass Vétéran gratuit) → 5 missions
+    - Standard                                     → 2 missions
+    """
     if _agent_has_active_boost(user):
         return 5
-    if _agent_completed_missions_count(user) >= 50:
-        return 3
-    return 1
+    return 2
+
+
+def _mission_material_cost(mission):
+    """Retourne le coût matériel de la mission."""
+    return mission.material_cost or Decimal('0')
+
+
+def _grant_veteran_boost_if_eligible(user) -> bool:
+    """Octroie un Pass Boost Gratuit de 3 jours quand l'agent franchit
+    le cap des 20 missions COMPLETED (une seule fois à vie).
+    Retourne True si le pass vient d'être attribué.
+    """
+    from apps.accounts.models import AgentProfile
+    from apps.boosts.models import AgentBoost, BoostPlan
+
+    if _agent_completed_missions_count(user) <= 20:
+        return False
+
+    with transaction.atomic():
+        profile, _ = AgentProfile.objects.select_for_update().get_or_create(user=user)
+        if profile.veteran_boost_claimed:
+            return False
+
+        now = timezone.now()
+        plan = BoostPlan.objects.filter(is_active=True).order_by('price').first()
+        AgentBoost.objects.create(
+            agent=user,
+            plan=plan,
+            expires_at=now + timedelta(days=3),
+            status='active',
+            purchase_amount=Decimal('0'),
+            transaction_id='VETERAN_REWARD',
+        )
+        profile.veteran_boost_claimed = True
+        profile.save(update_fields=['veteran_boost_claimed', 'updated_at'])
+    return True
 
 
 def _agent_can_accept_more(user):
@@ -788,6 +826,8 @@ class MissionViewSet(viewsets.ViewSet):
         mission.save(update_fields=['status', 'qr_code_token', 'updated_at'])
         self._log_event(mission, 'validated', request.user)
         send_system_message(mission, "Mission validée — fonds libérés vers l'agent")
+        if mission.agent:
+            _grant_veteran_boost_if_eligible(mission.agent)
         return Response({
             'status': 'success',
             'message': 'Mission validée et fonds libérés',
@@ -1147,6 +1187,8 @@ class MissionViewSet(viewsets.ViewSet):
         mission.status = 'COMPLETED'
         mission.save(update_fields=['status', 'updated_at'])
         self._log_event(mission, 'validated_remotely', request.user)
+        if mission.agent:
+            _grant_veteran_boost_if_eligible(mission.agent)
 
         return Response({
             'status': 'success',

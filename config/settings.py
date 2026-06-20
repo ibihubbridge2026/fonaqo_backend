@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     'apps.disputes.apps.DisputesConfig',
     'apps.statistics.apps.StatisticsConfig',
     'apps.leboncoin.apps.LeboncoinConfig',
+    'apps.ratings.apps.RatingsConfig',
 
     #celery
     'django_celery_results',
@@ -102,6 +103,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.core.middleware.AccountSuspensionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.core.staff_redirect_middleware.StaffDashboardRedirectMiddleware',

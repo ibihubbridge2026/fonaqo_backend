@@ -966,9 +966,9 @@
       const body = qs('#password-resets-body');
       if (!body) return;
       try {
-        const { ok, body } = await staffFetch('/api/v1/staff/password-resets/');
-        const { data } = parseStaffResponse(body);
-        const rows = data?.results || body?.results || [];
+        const { ok, body: respData } = await staffFetch('/api/v1/staff/password-resets/');
+        const { data } = parseStaffResponse(respData);
+        const rows = data?.results || respData?.results || [];
         if (!ok) {
           body.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-red-600">Erreur chargement</td></tr>';
           return;

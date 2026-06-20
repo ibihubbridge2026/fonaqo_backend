@@ -35,7 +35,8 @@
         <div>
           <h1>{{ agent.get_full_name|default:agent.username }}</h1>
           <p class="muted">{% if profile.agent_code %}{{ profile.agent_code }} · {% endif %}{{ agent.city|default:"Cotonou" }}</p>
-          {% if is_certified %}<span class="badge">AGENT CERTIFIÉ ★</span>{% endif %}
+          {% if is_certified and is_internal %}<span class="badge">AGENT CERTIFIÉ ★</span>
+          {% elif is_certified %}<span class="badge">AGENT CERTIFIÉ</span>{% endif %}
         </div>
       </div>
       {% if profile.bio %}<p>{{ profile.bio }}</p>{% endif %}
@@ -43,6 +44,7 @@
         <div class="stat"><strong>{{ completed_missions }}</strong><span class="muted">Missions</span></div>
         <div class="stat"><strong>{% if avg_rating %}{{ avg_rating }}/5{% else %}—{% endif %}</strong><span class="muted">Note</span></div>
         <div class="stat"><strong>{{ agent.reliability_score|floatformat:0 }}%</strong><span class="muted">Fiabilité</span></div>
+        {% if is_certified %}<div class="stat"><strong>{{ total_earnings|floatformat:0 }} F</strong><span class="muted">Encaissé</span></div>{% endif %}
       </div>
       {% if reviews %}
       <div class="reviews">

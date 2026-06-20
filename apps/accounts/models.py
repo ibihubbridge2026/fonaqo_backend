@@ -184,9 +184,46 @@ class AgentProfile(models.Model):
         blank=True,
         null=True,
     )
+    veteran_boost_claimed = models.BooleanField(
+        _('pass boost vétéran réclamé'),
+        default=False,
+        help_text=_('Pass Boost Gratuit 3 jours octroyé automatiquement dès 21 missions COMPLETED'),
+    )
+    badge_paid = models.BooleanField(
+        _('frais badge payés'),
+        default=False,
+        help_text=_('1 000 FCFA unique prélevés au moment de la première demande de badge'),
+    )
     badge_requested_at = models.DateTimeField(null=True, blank=True)
     badge_approved_at = models.DateTimeField(null=True, blank=True)
     badge_rejection_reason = models.TextField(_('motif rejet badge'), blank=True, default='')
+    average_rating = models.DecimalField(
+        _('note moyenne'),
+        max_digits=3,
+        decimal_places=2,
+        default=0.00,
+        help_text=_('Moyenne des notes reçues des clients (1-5)'),
+    )
+    ratings_count = models.IntegerField(
+        _('nombre de notes'),
+        default=0,
+        help_text=_('Nombre total de notes reçues'),
+    )
+    completion_rate = models.FloatField(
+        _('taux de complétion'),
+        default=0.0,
+        help_text=_('Pourcentage de missions complétées avec succès (0-100)'),
+    )
+    response_time_avg = models.FloatField(
+        _('temps de réponse moyen'),
+        default=0.0,
+        help_text=_('Temps moyen en secondes entre notification et acceptation de mission'),
+    )
+    ranking_score = models.FloatField(
+        _('score de classement'),
+        default=0.0,
+        help_text=_('Score métier calculé pour le classement des agents (0-100)'),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -281,6 +318,76 @@ class Influencer(models.Model):
         return start + timezone.timedelta(days=int(self.duration_years) * 365)
 
 
+class ClientRewardProfile(models.Model):
+    """Profil de fidélité client — points, niveaux et badges."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='reward_profile',
+    )
+    points = models.IntegerField(
+        _('points de fidélité'),
+        default=0,
+        help_text=_('Points accumulés par le client'),
+    )
+    level = models.IntegerField(
+        _('niveau de fidélité'),
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+        help_text=_('Niveau de fidélité (1-10)'),
+    )
+    total_missions_completed = models.IntegerField(
+        _('missions complétées'),
+        default=0,
+        help_text=_('Nombre total de missions complétées'),
+    )
+    total_spent = models.DecimalField(
+        _('total dépensé'),
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Montant total dépensé en missions'),
+    )
+    badges_unlocked = models.JSONField(
+        _('badges débloqués'),
+        default=list,
+        blank=True,
+        help_text=_('Liste des badges débloqués (IDs)'),
+    )
+    last_points_earned_at = models.DateTimeField(
+        _('derniers points gagnés'),
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('profil fidélité client')
+        verbose_name_plural = _('profils fidélité clients')
+
+    def __str__(self):
+        return f"ClientRewardProfile({self.user.username}, level={self.level}, points={self.points})"
+
+    def add_points(self, points: int, reason: str = ''):
+        """Ajoute des points au client et met à jour le niveau si nécessaire."""
+        self.points += points
+        self.last_points_earned_at = timezone.now()
+        self._update_level()
+        self.save(update_fields=['points', 'level', 'last_points_earned_at', 'updated_at'])
+
+    def _update_level(self):
+        """Met à jour le niveau en fonction des points."""
+        # Niveaux: 1 (0-99), 2 (100-299), 3 (300-599), 4 (600-999), 5 (1000-1499)
+        # 6 (1500-2099), 7 (2100-2799), 8 (2800-3599), 9 (3600-4499), 10 (4500+)
+        level_thresholds = [0, 100, 300, 600, 1000, 1500, 2100, 2800, 3600, 4500]
+        for i, threshold in enumerate(reversed(level_thresholds), start=1):
+            if self.points >= threshold:
+                self.level = 11 - i
+                break
+
+
 class InfluencerWithdrawalStatus(models.TextChoices):
     PENDING = 'PENDING', _('En attente')
     APPROVED = 'APPROVED', _('Approuvé')
@@ -355,6 +462,18 @@ class ClientProfile(models.Model):
         blank=True,
         default='',
         help_text=_('Code influenceur capturé via deep link avant inscription'),
+    )
+    average_rating = models.DecimalField(
+        _('note moyenne'),
+        max_digits=3,
+        decimal_places=2,
+        default=0.00,
+        help_text=_('Moyenne des notes reçues des agents (1-5)'),
+    )
+    ratings_count = models.IntegerField(
+        _('nombre de notes'),
+        default=0,
+        help_text=_('Nombre total de notes reçues'),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
