@@ -26,7 +26,12 @@ from .favorites_views import (
     client_favorites_toggle_view,
 )
 from .ranking_views import top_agents_view
-from .loyalty_views import client_rewards_view
+from .loyalty_views import (
+    client_rewards_view,
+    reward_catalog_view,
+    reward_history_view,
+    redeem_reward_view,
+)
 
 urlpatterns = [
     path('login/', login_view, name='login'),
@@ -49,5 +54,8 @@ urlpatterns = [
     path('agent/badge/download/', agent_badge_download_view, name='agent-badge-download'),
     path('agents/top/', top_agents_view, name='top-agents'),
     path('client/rewards/', client_rewards_view, name='client-rewards'),
+    path('client/rewards/catalog/', reward_catalog_view, name='reward-catalog'),
+    path('client/rewards/history/', reward_history_view, name='reward-history'),
+    path('client/rewards/redeem/', redeem_reward_view, name='reward-redeem'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
 ]

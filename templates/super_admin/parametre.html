@@ -82,17 +82,49 @@
           <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--fq-bg)] border border-[var(--fq-border-light)]">
             <div><p class="font-semibold">{{ plan.name }}</p><p class="text-xs text-[var(--fq-muted)]">{{ plan.duration_hours }}h · x{{ plan.visibility_multiplier }}</p></div>
             <div class="flex items-center gap-2">
-              <span class="mono font-bold">{{ plan.price|floatformat:0 }} FCFA</span>
-              <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" data-plan-price="{{ plan.price }}" data-plan-hours="{{ plan.duration_hours }}" class="fq-btn fq-btn-ghost fq-btn-sm">Modifier</button>
+              <span class="mono font-bold" id="plan-price-{{ plan.id }}">{{ plan.price|floatformat:0 }} FCFA</span>
+              <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" data-plan-name="{{ plan.name }}" data-plan-price="{{ plan.price }}" data-plan-hours="{{ plan.duration_hours }}" data-plan-days="{{ plan.duration_days }}" data-plan-desc="{{ plan.description|escape }}" data-plan-visibility="{{ plan.visibility_multiplier }}" class="fq-btn fq-btn-ghost fq-btn-sm">{% include "super_admin/partials/icon.html" with name="edit" class="w-4 h-4" %}</button>
             </div>
           </div>
           {% endfor %}
         </div>
-        <form id="form-boost-promo" class="grid grid-cols-2 gap-4 border-t pt-4">
-          <div><label class="fq-label">Promo boost (%)</label><input id="boost-promo-percent" type="number" min="0" max="100" class="fq-input mt-1" placeholder="0 = pas de promo"/></div>
-          <div><label class="fq-label">Fin promo (date)</label><input id="boost-promo-until" type="date" class="fq-input mt-1"/></div>
-          <div class="col-span-2"><button type="submit" class="fq-btn fq-btn-primary">Enregistrer la promo</button></div>
-        </form>
+
+        <div class="border-t pt-4">
+          <h4 class="fq-section-title mb-3">Créer une offre promo</h4>
+          <form id="form-boost-promo" class="space-y-4">
+            <div>
+              <label class="fq-label">Plan ciblé</label>
+              <select id="boost-promo-plan-id" class="fq-input mt-1">
+                <option value="">— Sélectionner un plan —</option>
+                {% for plan in boost_plans %}
+                <option value="{{ plan.id }}">{{ plan.name }} — {{ plan.price|floatformat:0 }} FCFA</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="fq-label">Réduction (%)</label>
+                <input id="boost-promo-percent" type="number" min="1" max="99" class="fq-input mt-1" placeholder="ex: 20"/>
+              </div>
+              <div>
+                <label class="fq-label">Début promo</label>
+                <input id="boost-promo-start" type="date" class="fq-input mt-1"/>
+              </div>
+              <div>
+                <label class="fq-label">Fin promo</label>
+                <input id="boost-promo-until" type="date" class="fq-input mt-1"/>
+              </div>
+            </div>
+            <button type="submit" class="fq-btn fq-btn-primary">Enregistrer la promo</button>
+          </form>
+
+          <div class="mt-6">
+            <h4 class="fq-section-title mb-3">Promotions actives</h4>
+            <div id="active-promos-list" class="space-y-2">
+              <p class="text-sm text-[var(--fq-muted)]">Chargement...</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div data-tab-panel="security" class="hidden fq-card fq-card-padded">

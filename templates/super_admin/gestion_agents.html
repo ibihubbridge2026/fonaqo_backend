@@ -14,14 +14,14 @@
 
 <section class="fq-card overflow-hidden">
   <div class="fq-filters">
-    <input type="search" id="agents-filter" placeholder="Rechercher agent, téléphone, username…" class="fq-search-field"/>
+    <input type="search" id="agents-filter" placeholder="Rechercher agent, téléphone, username…" class="fq-search-field" autocomplete="off"/>
     <button type="button" class="fq-filter-chip active" data-filter-kyc="">Tous</button>
     <button type="button" class="fq-filter-chip" data-filter-kyc="PENDING">KYC attente</button>
     <button type="button" class="fq-filter-chip" data-filter-kyc="APPROVED">Approuvés</button>
   </div>
   <div class="fq-table-wrap custom-scrollbar">
     <table class="fq-table" id="agents-table">
-      <thead><tr><th>Code</th><th>Username</th><th>Nom</th><th>Téléphone</th><th>Compétences</th><th>KYC</th><th>Badge</th><th class="text-right">Actions</th></tr></thead>
+      <thead><tr><th>Code</th><th>Username</th><th>Nom</th><th>Téléphone</th><th>KYC</th><th>Badge</th><th class="text-right">Actions</th></tr></thead>
       <tbody>
         {% for profile in agents %}
         <tr class="agent-row" data-agent-row="{{ profile.id }}" data-user-id="{{ profile.user.id }}"
@@ -36,34 +36,56 @@
           <td class="mono font-semibold">@{{ profile.user.username }}</td>
           <td>{{ profile.user.get_full_name|default:"—" }}{% if profile.is_internal %} <span class="fq-badge fq-badge-completed">INTERNE</span>{% endif %}</td>
           <td class="mono">{{ profile.user.phone_number|default:"—" }}</td>
-          <td>
-            {% with services=profile.user.offered_services.all %}
-              {% if services %}{% for svc in services|slice:":2" %}<span class="fq-badge fq-badge-default mr-1">{{ svc.title|default:"Service" }}</span>{% endfor %}{% else %}—{% endif %}
-            {% endwith %}
-          </td>
           <td><span data-kyc-badge class="fq-badge {% if profile.kyc_status == 'APPROVED' %}fq-badge-completed{% elif profile.kyc_status == 'REJECTED' %}fq-badge-cancelled{% else %}fq-badge-pending{% endif %}">{% if profile.kyc_status == 'APPROVED' %}Approuvé{% elif profile.kyc_status == 'REJECTED' %}Rejeté{% else %}En attente{% endif %}</span></td>
           <td><span class="fq-badge fq-badge-default">{{ profile.badge_status }}</span></td>
-          <td class="text-right space-x-1">
-            <button type="button" data-admin-action="view-row-detail" class="fq-btn fq-btn-ghost fq-btn-sm" title="Voir détails">{% include "super_admin/partials/icon.html" with name="eye" class="w-4 h-4" %}</button>
-            {% if profile.kyc_status == 'SUBMITTED' or profile.kyc_status == 'PENDING' %}
-            <button type="button" data-kyc-open="{{ profile.id }}" class="fq-btn fq-btn-ghost fq-btn-sm">Voir KYC</button>
-            {% endif %}
-            {% if profile.badge_status == 'PENDING' %}
-            <button type="button" data-admin-action="approve-badge" data-profile-id="{{ profile.id }}" class="fq-btn fq-btn-primary fq-btn-sm">Valider badge</button>
-            {% endif %}
-            <button type="button" data-admin-action="toggle-internal" data-profile-id="{{ profile.id }}" data-internal="{{ profile.is_internal|yesno:'1,0' }}" class="fq-btn fq-btn-ghost fq-btn-sm">{% if profile.is_internal %}Retirer interne{% else %}Agent interne{% endif %}</button>
-            {% if profile.kyc_status == 'APPROVED' %}
-            <button type="button" data-admin-action="promote-artisan" data-user-id="{{ profile.user.id }}" data-username="@{{ profile.user.username }}" class="fq-btn fq-btn-ghost fq-btn-sm">→ Annuaire</button>
-            {% endif %}
-            {% if profile.user.is_active %}
-            <button type="button" data-admin-action="suspend-user" data-user-id="{{ profile.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-red-600">Suspendre</button>
-            {% else %}
-            <button type="button" data-admin-action="reactivate-user" data-user-id="{{ profile.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-green-700">Réactiver</button>
-            {% endif %}
+          <td class="text-right">
+            <div class="flex items-start justify-end gap-1 flex-wrap">
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="view-row-detail" class="fq-btn fq-btn-ghost fq-btn-sm" title="Voir détails">{% include "super_admin/partials/icon.html" with name="eye" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Détails</span>
+              </div>
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-kyc-open="{{ profile.id }}" class="fq-btn fq-btn-ghost fq-btn-sm" title="KYC">{% include "super_admin/partials/icon.html" with name="file-text" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">KYC</span>
+              </div>
+              {% if profile.badge_status == 'PENDING' %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="approve-badge" data-profile-id="{{ profile.id }}" class="fq-btn fq-btn-primary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="badge" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Badge</span>
+              </div>
+              {% endif %}
+              {% if profile.badge_photo or profile.selfie_photo %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="generate-badge" data-profile-id="{{ profile.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-[var(--fq-primary)]">{% include "super_admin/partials/icon.html" with name="download" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Télécharger</span>
+              </div>
+              {% endif %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="toggle-internal" data-profile-id="{{ profile.id }}" data-internal="{{ profile.is_internal|yesno:'1,0' }}" class="fq-btn fq-btn-ghost fq-btn-sm">{% include "super_admin/partials/icon.html" with name="building" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">{% if profile.is_internal %}Retirer{% else %}Interne{% endif %}</span>
+              </div>
+              {% if profile.kyc_status == 'APPROVED' %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="promote-artisan" data-user-id="{{ profile.user.id }}" data-username="@{{ profile.user.username }}" class="fq-btn fq-btn-ghost fq-btn-sm">{% include "super_admin/partials/icon.html" with name="book" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Annuaire</span>
+              </div>
+              {% endif %}
+              {% if profile.user.is_active %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="suspend-user" data-user-id="{{ profile.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-red-600">{% include "super_admin/partials/icon.html" with name="ban" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Suspendre</span>
+              </div>
+              {% else %}
+              <div class="flex flex-col items-center gap-0.5">
+                <button type="button" data-admin-action="reactivate-user" data-user-id="{{ profile.user.id }}" class="fq-btn fq-btn-ghost fq-btn-sm text-green-700">{% include "super_admin/partials/icon.html" with name="check-circle" class="w-4 h-4" %}</button>
+                <span class="text-[9px] text-[var(--fq-muted)] leading-none">Réactiver</span>
+              </div>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8"><div class="fq-empty">Aucun agent.</div></td></tr>
+        <tr><td colspan="7"><div class="fq-empty">Aucun agent.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -74,7 +96,7 @@
 <aside id="kyc-drawer" class="fq-drawer">
   <div class="flex items-center justify-between p-6 border-b"><div><h3 class="fq-section-title" id="kyc-agent-name">Agent</h3><p class="text-sm text-[var(--fq-muted)]" id="kyc-agent-username"></p></div><button type="button" data-kyc-close class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button></div>
   <input type="hidden" id="kyc-profile-id"/>
-  <div class="flex-1 overflow-y-auto p-6 space-y-6"><div><p class="fq-label">CNI</p><img id="kyc-id-preview" class="w-full rounded-xl border min-h-[160px] object-contain bg-[var(--fq-bg)]"/></div><div><p class="fq-label">Selfie</p><img id="kyc-selfie-preview" class="w-full rounded-xl border min-h-[160px] object-contain bg-[var(--fq-bg)]"/></div></div>
+  <div class="flex-1 overflow-y-auto p-6 space-y-6"><div><p class="fq-label">CNI</p><img id="kyc-id-preview" alt="CNI" class="w-full rounded-xl border min-h-[160px] object-contain bg-[var(--fq-bg)]"/></div><div><p class="fq-label">Selfie</p><img id="kyc-selfie-preview" alt="Selfie" class="w-full rounded-xl border min-h-[160px] object-contain bg-[var(--fq-bg)]"/></div></div>
   <div class="p-6 border-t grid grid-cols-2 gap-3" id="kyc-drawer-actions"><button type="button" data-kyc-action="reject" class="fq-btn fq-btn-secondary">Rejeter</button><button type="button" data-kyc-action="approve" class="fq-btn fq-btn-primary">Approuver</button></div>
 </aside>
 {% endblock %}

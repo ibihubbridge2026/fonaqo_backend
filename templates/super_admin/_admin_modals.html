@@ -125,8 +125,14 @@
     <div class="p-6 border-b"><h3 class="fq-section-title">Modifier forfait Boost</h3></div>
     <form id="form-boost-plan" class="p-6 space-y-4">
       <input type="hidden" id="boost-plan-id"/>
+      <div><label class="fq-label">Nom</label><input id="boost-plan-name" class="fq-input mt-1"/></div>
       <div><label class="fq-label">Prix (FCFA)</label><input id="boost-plan-price" type="number" min="0" class="fq-input mono mt-1"/></div>
-      <div><label class="fq-label">Durée (heures)</label><input id="boost-plan-hours" type="number" min="1" class="fq-input mt-1"/></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="fq-label">Durée (jours)</label><input id="boost-plan-days" type="number" min="1" class="fq-input mt-1"/></div>
+        <div><label class="fq-label">Durée (heures)</label><input id="boost-plan-hours" type="number" min="1" class="fq-input mt-1"/></div>
+      </div>
+      <div><label class="fq-label">Description</label><textarea id="boost-plan-desc" rows="2" class="fq-input mt-1 py-2"></textarea></div>
+      <div><label class="fq-label">Multiplicateur visibilité</label><input id="boost-plan-visibility" type="text" inputmode="decimal" class="fq-input mono mt-1" placeholder="ex: 1.5"/></div>
       <button type="submit" class="fq-btn fq-btn-primary w-full">Enregistrer</button>
     </form>
   </div>
@@ -184,5 +190,21 @@
       <button type="button" data-admin-action="close-row-detail" class="fq-icon-btn">×</button>
     </div>
     <div id="row-detail-body" class="p-6 overflow-y-auto space-y-3 text-sm"></div>
+  </div>
+</div>
+
+<div id="modal-chat-overlay" class="hidden fixed inset-0 bg-black/40 z-[70] backdrop-blur-sm"></div>
+<div id="modal-chat" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+  <div class="fq-modal w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+    <div class="p-6 border-b flex items-center justify-between">
+      <h3 class="fq-section-title">Conversation mission</h3>
+      <button type="button" data-modal-close="modal-chat" class="fq-icon-btn">{% include "super_admin/partials/icon.html" with name="close" class="w-5 h-5" %}</button>
+    </div>
+    <div id="chat-messages-body" class="p-6 overflow-y-auto space-y-3 text-sm bg-[var(--fq-bg)] min-h-[300px]">
+      <p class="text-[var(--fq-muted)] text-center py-8">Chargement de la conversation...</p>
+    </div>
+    <div class="p-4 border-t bg-[var(--fq-bg)]">
+      <p class="text-xs text-[var(--fq-muted)] text-center">Lecture seule — Mode administrateur</p>
+    </div>
   </div>
 </div>

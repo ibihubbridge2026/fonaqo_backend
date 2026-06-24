@@ -32,6 +32,17 @@ class Wallet(models.Model):
     class Meta:
         verbose_name = _("Portefeuille")
         verbose_name_plural = _("Portefeuilles")
+        constraints = [
+            # AUDIT FIX [P1] — Contrainte CHECK balance >= 0
+            models.CheckConstraint(
+                condition=models.Q(balance__gte=0),
+                name='check_wallet_balance_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(escrow_balance__gte=0),
+                name='check_escrow_balance_non_negative',
+            ),
+        ]
 
     def __str__(self):
         user_identifier = self.user.phone_number or self.user.email or self.user.username or f"User-{self.user.id}"
@@ -84,6 +95,9 @@ class Transaction(models.Model):
         ordering = ['-created_at']
         verbose_name = _("Transaction")
         verbose_name_plural = _("Transactions")
+        indexes = [
+            models.Index(fields=['wallet', '-created_at'], name='wallet_tx_wallet_date_idx'),
+        ]
 
     def __str__(self):
         return f"{self.transaction_type} - {self.amount} FCFA"
@@ -101,6 +115,14 @@ class PayoutRequest(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('Montant'))
     payment_method = models.CharField(max_length=50, verbose_name=_('Opérateur MoMo'))
     phone_number = models.CharField(max_length=20, verbose_name=_('Numéro de versement'))
+    provider_transaction_id = models.CharField(
+        max_length=100,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="ID de transaction unique du fournisseur Mobile Money pour idempotency callback"
+    )
     status = models.CharField(
         max_length=20,
         choices=PayoutRequestStatus.choices,

@@ -3,9 +3,24 @@
 {% block content %}
 
 <div class="fq-hero" style="margin-bottom:24px">
-  <div><h2>Forfaits Boost</h2><p>Visibilité et plans actifs</p></div>
+  <div><h2>Forfaits Boost</h2><p>Visibilité et plans actifs — lecture dynamique base de données</p></div>
   <button type="button" data-admin-action="refresh-boosts" class="fq-btn fq-btn-secondary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Actualiser</button>
 </div>
+
+<section class="fq-card fq-card-padded mb-8">
+  <h3 class="fq-section-title mb-4 flex items-center gap-2">
+    {% include "super_admin/partials/icon.html" with name="plus" class="w-5 h-5" %}
+    Nouveau plan
+  </h3>
+  <form id="form-boost-plan-create" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div><label class="fq-label">Nom</label><input id="boost-create-name" required class="fq-input mt-1" placeholder="Week Boost"/></div>
+    <div><label class="fq-label">Prix (FCFA)</label><input id="boost-create-price" type="number" min="0" required class="fq-input mono mt-1"/></div>
+    <div><label class="fq-label">Durée (jours)</label><input id="boost-create-days" type="number" min="1" value="7" required class="fq-input mt-1"/></div>
+    <div class="md:col-span-2"><label class="fq-label">Description</label><input id="boost-create-desc" class="fq-input mt-1" placeholder="Visibilité prioritaire…"/></div>
+    <div><label class="fq-label">Multiplicateur visibilité</label><input id="boost-create-visibility" type="text" inputmode="decimal" value="1.5" class="fq-input mono mt-1" placeholder="ex: 1.5"/></div>
+    <div class="flex items-end"><button type="submit" class="fq-btn fq-btn-primary w-full">Créer le plan</button></div>
+  </form>
+</section>
 
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
   {% for plan in plans %}
@@ -15,7 +30,9 @@
     <p class="fq-stat-value" style="font-size:22px">{{ plan.price }} <span class="text-sm font-normal text-[var(--fq-muted)]">FCFA</span></p>
     <p class="text-sm text-[var(--fq-muted)]">{{ plan.duration_display }} · ×{{ plan.visibility_multiplier }}</p>
     <span class="fq-badge {% if plan.is_active %}fq-badge-completed{% else %}fq-badge-default{% endif %} w-fit">{{ plan.is_active|yesno:"Actif,Inactif" }}</span>
-    <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" class="fq-btn fq-btn-secondary fq-btn-sm w-full mt-2">Modifier</button>
+    <button type="button" data-admin-action="edit-boost-plan" data-plan-id="{{ plan.id }}" data-plan-name="{{ plan.name }}" data-plan-price="{{ plan.price }}" data-plan-hours="{{ plan.duration_hours }}" data-plan-days="{{ plan.duration_days }}" data-plan-desc="{{ plan.description|escape }}" data-plan-visibility="{{ plan.visibility_multiplier }}" class="fq-btn fq-btn-secondary fq-btn-sm w-full mt-2">
+      {% include "super_admin/partials/icon.html" with name="edit" class="w-4 h-4" %} Modifier
+    </button>
   </div>
   {% empty %}
   <div class="fq-empty col-span-3">Aucun plan boost.</div>

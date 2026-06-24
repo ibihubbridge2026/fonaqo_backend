@@ -24,7 +24,9 @@ dashboard_patterns = [
     path('influenceurs/<int:influencer_id>/', admin_views.AdminInfluencerDetailView.as_view(), name='admin-influencer-detail'),
     path('influenceur/', admin_views.InfluencerPortalView.as_view(), name='admin-influencer-portal'),
     path('mon-profil/', admin_views.AdminProfileView.as_view(), name='admin-profile'),
+    path('managers/', admin_views.AdminManagersView.as_view(), name='admin-managers'),
     path('staff/', admin_views.AdminStaffView.as_view(), name='admin-staff'),
     path('audit/', admin_views.AdminAuditView.as_view(), name='admin-audit'),
+    path('activite/', admin_views.AdminActivityView.as_view(), name='admin-activity'),
     path('password-resets/', admin_views.AdminPasswordResetsView.as_view(), name='admin-password-resets'),
 ]

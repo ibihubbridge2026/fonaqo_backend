@@ -27,7 +27,7 @@ class DisputeViewSet(viewsets.ModelViewSet):
 
   def get_queryset(self):
     user = self.request.user
-    if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+    if getattr(user, 'is_superuser', False):
       return Dispute.objects.select_related(
         'mission', 'opened_by', 'assigned_to', 'resolved_by',
       ).order_by('-created_at')

@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from django_ratelimit.decorators import ratelimit
 
 from apps.core.choices import MissionStatus
 from apps.missions.models import Mission
@@ -16,6 +17,7 @@ from apps.missions.models import Mission
 from .models import FavoriteAgent, AgentProfile
 from .serializers import LoginSerializer, ProfileUpdateSerializer, RegisterSerializer, UserSerializer
 from apps.core.choices import AgentKYCStatus
+from .permissions import IsAgent
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -236,6 +238,7 @@ def public_artisan_detail_view(request, artisan_id):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@ratelimit(key='ip', rate='5/m', method='POST')
 def login_view(request):
     """
     Vue de connexion pour l'authentification JWT
@@ -289,6 +292,7 @@ def login_view(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@ratelimit(key='ip', rate='3/m', method='POST')
 def register_view(request):
     """
     Vue d'inscription pour créer un nouvel utilisateur
@@ -1029,15 +1033,10 @@ def change_password_view(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsAgent])
 def kyc_submit_view(request):
     """Soumission KYC agent (pièce d'identité + selfie)."""
     user = request.user
-    if not user.is_agent:
-        return JsonResponse(
-            {'message': 'Réservé aux agents.'},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     id_card = request.FILES.get('id_card_photo')
     selfie = request.FILES.get('selfie_photo')

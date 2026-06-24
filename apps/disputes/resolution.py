@@ -51,6 +51,7 @@ class DisputeResolutionService:
             'resolution_notes', 'resolved_by', 'resolved_at', 'status', 'updated_at',
         ])
 
+        mission.refresh_from_db()
         notify_dispute_resolution(dispute)
         return dispute
 
@@ -167,5 +168,12 @@ class DisputeResolutionService:
                     user,
                     'Litige arbitré',
                     f'Arbitrage appliqué sur la mission « {mission.title[:60]} ».',
-                    data={'type': 'DISPUTE_ARBITRAGED', 'mission_id': str(mission.id)},
+                    data={
+                        'type': 'DISPUTE_ARBITRAGED',
+                        'mission_id': str(mission.id),
+                        'mission_status': mission.status,
+                        'dispute_id': str(dispute.id),
+                        'action': 'mission',
+                        'target_id': str(mission.id),
+                    },
                 )

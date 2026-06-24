@@ -42,6 +42,7 @@ class EscrowSplitRecord(models.Model):
         CLIENT = 'CLIENT', _('Client')
         PLATFORM = 'PLATFORM', _('Plateforme FONACO')
         INFLUENCER = 'INFLUENCER', _('Influenceur')
+        MANAGER = 'MANAGER', _('Manager de Brigade')
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     mission = models.ForeignKey(
@@ -63,6 +64,13 @@ class EscrowSplitRecord(models.Model):
     )
     influencer = models.ForeignKey(
         'accounts.Influencer',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='escrow_split_records',
+    )
+    team_manager = models.ForeignKey(
+        'accounts.TeamManager',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

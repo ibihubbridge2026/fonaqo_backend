@@ -8,9 +8,12 @@ Usage :
 """
 from __future__ import annotations
 
+import logging
+import secrets
 import uuid
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.gis.geos import Point
 from django.db import transaction
@@ -27,16 +30,18 @@ from apps.wallets.models import Transaction as WalletTransaction
 from apps.wallets.models import Wallet
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 ADMIN_USERNAME = "admin_test"
 ADMIN_PHONE = "+22960000001"
-DEFAULT_PASSWORD = "Fonaco2026!"
+# AUDIT FIX [P1] — Supprimer le mot de passe hardcodé
+DEFAULT_PASSWORD = getattr(settings, 'SEED_DEFAULT_PASSWORD', None) or secrets.token_urlsafe(16)
 
 # Legacy demo seed (non invoqué par run_seed)
 UAT_ADMIN_USERNAME = ADMIN_USERNAME
 UAT_ADMIN_PASSWORD = DEFAULT_PASSWORD
 UAT_AGENT_USERNAME = "agent_terrain"
-UAT_AGENT_PASSWORD = "Agent2026!"
+UAT_AGENT_PASSWORD = secrets.token_urlsafe(16)
 
 COORDS = {
     "cadjehoun": (6.3735, 2.3904),
@@ -626,9 +631,16 @@ def create_only_admin(password: str = DEFAULT_PASSWORD, stdout=None):
     return admin, created
 
 
-def run_seed(password: str = DEFAULT_PASSWORD, stdout=None):
+def run_seed(password: str | None = None, stdout=None):
     """Vide optionnellement puis enregistre uniquement le compte SuperAdmin."""
     write = stdout.write if stdout else print
+
+    if not password:
+        password = getattr(settings, 'SEED_DEFAULT_PASSWORD', None) or secrets.token_urlsafe(16)
+        logger.warning(
+            "SEED: Mot de passe par défaut généré : %s — Changez-le immédiatement!",
+            password,
+        )
 
     with transaction.atomic():
         admin, admin_created = create_only_admin(password, stdout=stdout)

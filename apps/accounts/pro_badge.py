@@ -52,21 +52,23 @@ def build_agent_pro_badge_pdf(user, profile) -> bytes:
     content_x = sidebar_w + 4 * mm
     top_y = height - 8 * mm
 
-    # Badge certifié si agent interne
+    # Badge certifié si agent interne — bandeau séparé du nom
+    name_y = top_y - 2 * mm
     if profile.is_internal:
         c.setFillColor(yellow)
         _draw_rounded_rect(c, width - 48 * mm, top_y - 2 * mm, 44 * mm, 7 * mm, 3 * mm)
         c.setFillColor(dark)
         c.setFont('Helvetica-Bold', 7)
         c.drawCentredString(width - 26 * mm, top_y + 0.5 * mm, 'AGENT CERTIFIÉ ★')
+        name_y = top_y - 12 * mm
 
-    # Nom agent
+    # Nom agent (sous le bandeau certifié le cas échéant)
     full_name = (user.get_full_name() or user.username).upper()
     if len(full_name) > 22:
         full_name = full_name[:20] + '…'
     c.setFillColor(dark)
     c.setFont('Helvetica-Bold', 13)
-    c.drawString(content_x + 18 * mm, top_y - 2 * mm, full_name)
+    c.drawString(content_x + 18 * mm, name_y, full_name)
 
     # Rôle / catégorie
     specialty = user.service_domain or user.expertises or 'Agent terrain'
@@ -74,7 +76,7 @@ def build_agent_pro_badge_pdf(user, profile) -> bytes:
         specialty = specialty[:38] + '…'
     c.setFillColor(orange)
     c.setFont('Helvetica', 7.5)
-    c.drawString(content_x + 18 * mm, top_y - 8 * mm, f'Agent — {specialty}')
+    c.drawString(content_x + 18 * mm, name_y - 6 * mm, f'Agent — {specialty}')
 
     # Photo placeholder (cercle jaune)
     photo_x = content_x
@@ -82,10 +84,11 @@ def build_agent_pro_badge_pdf(user, profile) -> bytes:
     c.setStrokeColor(yellow)
     c.setLineWidth(1.5)
     c.circle(photo_x + 8 * mm, photo_y + 8 * mm, 8 * mm, fill=0, stroke=1)
-    if profile.badge_photo:
+    photo = profile.badge_photo or profile.selfie_photo
+    if photo:
         try:
             from reportlab.lib.utils import ImageReader
-            img = ImageReader(profile.badge_photo.path)
+            img = ImageReader(photo.path)
             c.drawImage(
                 img,
                 photo_x,

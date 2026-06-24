@@ -10,6 +10,7 @@ Fonctionnalités :
   - Présence utilisateur (online / last_seen)
   - Typing indicator avec expiration 5 secondes
   - Messages système automatiques (envoyés depuis la vue mission)
+  - Rate limiting sur les connexions
 """
 import json
 import uuid
@@ -20,12 +21,14 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
+from django.core.cache import cache
 
 from .models import Conversation, Message, TypingStatus, UserPresence
 
 User = get_user_model()
 
 TYPING_EXPIRY_SECONDS = 5
+RATE_LIMIT_KEY_PREFIX = 'ws_rate_limit'
 
 
 def _message_to_dict(msg: Message, request=None) -> dict:
@@ -79,6 +82,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not self.user or self.user.is_anonymous:
             await self.close(code=4001)
             return
+
+        # Rate limiting: max 10 connections per minute per user
+        rate_limit_key = f'{RATE_LIMIT_KEY_PREFIX}:{self.user.id}'
+        connection_count = cache.get(rate_limit_key, 0)
+        if connection_count >= 10:
+            await self.close(code=4408)  # Too many connections
+            return
+
+        # Increment connection count with 60 second expiry
+        cache.set(rate_limit_key, connection_count + 1, 60)
 
         self.conversation = await self.get_or_create_conversation()
         if self.conversation is None:
@@ -461,7 +474,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 qs = qs.filter(created_at__gt=ref.created_at)
             except (Message.DoesNotExist, ValueError, TypeError):
                 pass
-        return list(qs.select_related('sender')[:200])
+        return list(qs.select_related('sender')[:100])  # AUDIT FIX [P0] — limit 100
 
     @database_sync_to_async
     def update_typing_status(self, is_typing: bool, expires_at):

@@ -14,16 +14,17 @@ from .serializers import (
 )
 
 
+from apps.accounts.permissions import IsAgent
+
+
 class AgentStatisticsViewSet(viewsets.ModelViewSet):
     """ViewSet pour les statistiques d'agent"""
     serializer_class = AgentStatisticsSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAgent]
     
     def get_queryset(self):
         user = self.request.user
-        if hasattr(user, 'agentprofile'):
-            return AgentStatistics.objects.filter(agent=user.agentprofile)
-        return AgentStatistics.objects.none()
+        return AgentStatistics.objects.filter(agent=user)
     
     @action(detail=False, methods=['get'])
     def performance_stats(self, request):

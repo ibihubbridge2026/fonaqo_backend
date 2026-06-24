@@ -819,78 +819,191 @@ body.fq-sidebar-collapsed .fq-nav-chevron { display: none; }
 .fq-drawer.open { transform: translateX(0); }
 
 /* ─── Modals ─── */
+.fq-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.fq-modal-backdrop.hidden { display: none; }
 .fq-modal {
   background: var(--fq-card);
   border-radius: var(--fq-radius-lg);
   box-shadow: var(--fq-shadow-lg);
   border: 1px solid var(--fq-border);
   max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  width: 100%;
+  position: relative;
 }
+.fq-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--fq-border);
+}
+.fq-modal-header h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.fq-modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--fq-border);
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fq-muted);
+  flex-shrink: 0;
+}
+.fq-modal-close:hover { background: var(--fq-surface-container-low); }
+.fq-modal-body { padding: 24px; }
 
 /* ─── Forms ─── */
-/* Neutralise Tailwind CDN forms plugin (bordures sombres par défaut) */
-body.fq-admin input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+/* Neutralise Tailwind CDN forms plugin (bordures noires agressives) */
+body.fq-admin input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):not([type="range"]),
 body.fq-admin select,
 body.fq-admin textarea {
   --tw-ring-shadow: 0 0 #0000 !important;
   --tw-ring-offset-shadow: 0 0 #0000 !important;
   --tw-ring-color: transparent !important;
+  border-color: #e5e7eb !important;
+  outline: none !important;
+}
+body.fq-admin input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):not([type="range"]):focus,
+body.fq-admin select:focus,
+body.fq-admin textarea:focus {
+  border-color: #eab308 !important;
+  box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.45) !important;
+  outline: none !important;
 }
 
-.fq-input {
+.fq-input,
+body.fq-admin select.fq-input,
+body.fq-admin textarea.fq-input {
   width: 100%;
   min-height: 44px;
   padding: 0 14px;
-  border: 1px solid var(--fq-border-light);
-  border-radius: var(--fq-radius);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
   font-size: 14px;
-  background: var(--fq-card);
-  color: var(--fq-text);
-  transition: border-color var(--fq-transition), box-shadow var(--fq-transition);
-  box-shadow: var(--fq-shadow-xs);
+  background: #ffffff;
+  color: #111827;
+  transition: border-color var(--fq-transition), box-shadow var(--fq-transition), background var(--fq-transition);
+  box-shadow: none;
+}
+body.fq-admin textarea.fq-input {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  min-height: auto;
 }
 .fq-input::placeholder { color: var(--fq-muted); }
-.fq-input:hover:not(:focus) {
-  border-color: var(--fq-border);
-  background: var(--fq-bg);
+.fq-input:hover:not(:focus):not(:disabled):not([readonly]) {
+  border-color: #d1d5db;
 }
 .fq-input:focus {
   outline: none;
-  border-color: var(--fq-yellow);
-  background: var(--fq-card);
-  box-shadow: 0 0 0 3px var(--fq-yellow-soft);
+  border-color: #eab308;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.45);
 }
-.fq-input:disabled {
-  background: var(--fq-bg);
-  color: var(--fq-muted);
+.fq-input:disabled,
+.fq-input[readonly],
+.fq-input-readonly {
+  background: #f3f4f6;
+  color: #6b7280;
   cursor: not-allowed;
-  opacity: 0.85;
+  border-color: #e5e7eb;
+  box-shadow: none;
+}
+.fq-input:disabled:focus,
+.fq-input[readonly]:focus,
+.fq-input-readonly:focus {
+  border-color: #e5e7eb;
+  box-shadow: none;
+}
+
+/* Actions tableaux — icônes toujours visibles */
+.fq-table .fq-btn-ghost {
+  color: #475569;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fq-table .fq-btn-ghost svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  opacity: 1;
+}
+.fq-table .fq-btn-ghost:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.fq-row-selected {
+  background: rgba(255, 209, 0, 0.08) !important;
+  border-left-color: var(--fq-yellow) !important;
+}
+#dispute-panel.is-ready .fq-btn[data-admin-action^="dispute"],
+#dispute-panel.is-ready .fq-btn[data-admin-action="open-arbitrage"] {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+#dispute-panel:not(.is-ready) .fq-btn[data-admin-action^="dispute"],
+#dispute-panel:not(.is-ready) .fq-btn[data-admin-action="open-arbitrage"] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  filter: grayscale(0.15);
 }
 
 /* Champs recherche (navbar + filtres tableaux) */
 .fq-search-field {
-  min-height: 40px;
-  padding: 0 14px 0 40px;
-  border: 1px solid var(--fq-border-light);
-  border-radius: var(--fq-radius);
-  background: var(--fq-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z'/%3E%3C/svg%3E") no-repeat 12px center / 18px 18px;
-  color: var(--fq-text);
-  font-size: 14px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 16px 0 42px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z'/%3E%3C/svg%3E") no-repeat 14px center / 18px 18px;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.4;
   transition: border-color var(--fq-transition), box-shadow var(--fq-transition), background-color var(--fq-transition);
   box-shadow: none;
 }
-.fq-search-field::placeholder { color: var(--fq-muted); }
+.fq-search-field::placeholder {
+  color: var(--fq-muted);
+  font-size: 13px;
+}
 .fq-search-field:hover:not(:focus) {
-  border-color: var(--fq-border);
-  background-color: var(--fq-card);
+  border-color: #d1d5db;
 }
 .fq-search-field:focus {
   outline: none;
-  border-color: var(--fq-yellow);
-  background-color: var(--fq-card);
-  box-shadow: 0 0 0 3px var(--fq-yellow-soft);
+  border-color: #eab308;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.45);
 }
-.fq-filters .fq-search-field { flex: 1; min-width: 200px; max-width: 320px; }
+.fq-filters {
+  align-items: center;
+}
+.fq-filters .fq-search-field {
+  flex: 1 1 280px;
+  min-width: 260px;
+  max-width: 420px;
+}
 .fq-label {
   display: block;
   font-size: 12px;
@@ -911,15 +1024,19 @@ body.fq-admin textarea {
   border-bottom: 1px solid var(--fq-border-light);
 }
 .fq-filter-chip {
-  padding: 8px 14px;
-  border-radius: 99px;
-  border: 1px solid var(--fq-border);
-  background: var(--fq-card);
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
   font-size: 13px;
   font-weight: 500;
   color: var(--fq-text-secondary);
   cursor: pointer;
-  min-height: 36px;
+  min-height: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all var(--fq-transition);
 }
 .fq-filter-chip:hover, .fq-filter-chip.active {
@@ -1204,5 +1321,5 @@ body.fq-login-body {
 .fonaco-tab { padding: 8px 16px; border-radius: var(--fq-radius-sm); font-size: 13px; font-weight: 600; color: var(--fq-muted); border: none; cursor: pointer; min-height: 40px; }
 .fonaco-tab.active { background: var(--fq-card); color: var(--fq-black); box-shadow: var(--fq-shadow-xs); }
 .fonaco-table, .fq-table { width: 100%; border-collapse: collapse; }
-.fonaco-kpi, .fq-stat-card { }
-.fonaco-toast, .fq-toast { }
+.fonaco-kpi, .fq-stat-card { display: block; }
+.fonaco-toast, .fq-toast { display: block; }

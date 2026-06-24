@@ -2,23 +2,82 @@
 {% block title %}Wallet plateforme{% endblock %}
 {% block content %}
 <div class="fq-hero" style="margin-bottom:24px">
-  <div><h2>Wallet plateforme</h2><p>Revenus, commissions, boosts et trésorerie FONAQO</p></div>
-  <button type="button" id="wallet-refresh-btn" class="fq-btn fq-btn-secondary fq-btn-sm">{% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Actualiser</button>
+  <div>
+    <h2>Wallet plateforme</h2>
+    <p>Trésorerie complète FONAQO — toutes sources de revenus</p>
+  </div>
+  <button type="button" id="wallet-refresh-btn" class="fq-btn fq-btn-secondary fq-btn-sm">
+    {% include "super_admin/partials/icon.html" with name="refresh" class="w-4 h-4" %} Actualiser
+  </button>
 </div>
 
-<div class="fq-stat-grid mb-6" id="wallet-kpis">
-  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Revenu plateforme</p><p class="fq-stat-value" style="font-size:20px" data-wallet="platform_revenue"><span class="fq-skeleton inline-block w-24 h-6"></span></p></div>
-  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Revenus Boost</p><p class="fq-stat-value" style="font-size:20px" data-wallet="boost_revenue"><span class="fq-skeleton inline-block w-24 h-6"></span></p></div>
-  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Escrow bloqué</p><p class="fq-stat-value" style="font-size:20px" data-wallet="escrow_held"><span class="fq-skeleton inline-block w-24 h-6"></span></p></div>
-  <div class="fq-stat-card" style="padding:16px"><p class="fq-stat-label">Commissions influenceurs (dû)</p><p class="fq-stat-value" style="font-size:20px" data-wallet="influencer_pending"><span class="fq-skeleton inline-block w-24 h-6"></span></p></div>
+<!-- KPIs -->
+<div class="fq-stat-grid mb-4" id="wallet-kpis" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+  <div class="fq-stat-card" style="padding:16px;border-top:3px solid var(--fq-yellow)">
+    <p class="fq-stat-label">Total plateforme</p>
+    <p class="fq-stat-value mono" style="font-size:20px" data-wallet="total_platform"><span class="fq-skeleton inline-block w-24 h-6"></span></p>
+    <p class="text-xs text-[var(--fq-muted)] mt-1">Missions + Boosts</p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Revenu missions</p>
+    <p class="fq-stat-value mono" style="font-size:20px" data-wallet="platform_revenue"><span class="fq-skeleton inline-block w-24 h-6"></span></p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Revenus Boost</p>
+    <p class="fq-stat-value mono" style="font-size:20px" data-wallet="boost_revenue"><span class="fq-skeleton inline-block w-24 h-6"></span></p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Escrow bloqué</p>
+    <p class="fq-stat-value mono" style="font-size:20px" data-wallet="escrow_held"><span class="fq-skeleton inline-block w-24 h-6"></span></p>
+    <p class="text-xs text-[var(--fq-muted)] mt-1">HELD + DISPUTED</p>
+  </div>
+  <div class="fq-stat-card" style="padding:16px">
+    <p class="fq-stat-label">Commissions influenceurs</p>
+    <p class="fq-stat-value mono" style="font-size:20px" data-wallet="influencer_commissions"><span class="fq-skeleton inline-block w-24 h-6"></span></p>
+  </div>
+</div>
+
+<!-- Filtres période + exports -->
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div class="flex items-center gap-2" id="wallet-period-filters">
+    <span class="text-xs text-[var(--fq-muted)] font-semibold uppercase tracking-wide">Période :</span>
+    <button type="button" class="fq-filter-chip active" data-wallet-period="all">Tout</button>
+    <button type="button" class="fq-filter-chip" data-wallet-period="today">Auj.</button>
+    <button type="button" class="fq-filter-chip" data-wallet-period="week">Semaine</button>
+    <button type="button" class="fq-filter-chip" data-wallet-period="month">Mois</button>
+    <button type="button" class="fq-filter-chip" data-wallet-period="year">Année</button>
+  </div>
+  <div class="flex items-center gap-2" id="wallet-export-btns">
+    <span class="text-xs text-[var(--fq-muted)] font-semibold uppercase tracking-wide">Export :</span>
+    <button type="button" id="wallet-export-csv" class="fq-btn fq-btn-secondary fq-btn-sm">
+      {% include "super_admin/partials/icon.html" with name="download" class="w-4 h-4" %} Excel / CSV
+    </button>
+    <button type="button" id="wallet-export-pdf" class="fq-btn fq-btn-secondary fq-btn-sm">
+      {% include "super_admin/partials/icon.html" with name="file-text" class="w-4 h-4" %} PDF
+    </button>
+  </div>
 </div>
 
 <section class="fq-card overflow-hidden">
-  <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Historique trésorerie</h3></div>
-  <div class="fq-table-wrap">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
+    <h3 class="fq-section-title">Historique trésorerie</h3>
+    <span id="wallet-history-count" class="text-xs text-[var(--fq-muted)]"></span>
+  </div>
+  <div class="fq-table-wrap custom-scrollbar">
     <table class="fq-table">
-      <thead><tr><th>Date</th><th>Type</th><th>Montant</th><th>Description</th></tr></thead>
-      <tbody id="wallet-history-body"><tr><td colspan="4" class="text-center py-8"><span class="fq-skeleton inline-block w-40 h-5"></span></td></tr></tbody>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Code utilisateur</th>
+          <th>Nom</th>
+          <th>Montant</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody id="wallet-history-body">
+        <tr><td colspan="6" class="text-center py-8"><span class="fq-skeleton inline-block w-40 h-5"></span></td></tr>
+      </tbody>
     </table>
   </div>
 </section>

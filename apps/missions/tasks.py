@@ -52,6 +52,96 @@ def check_pending_mission_alert(mission_id: str):
     logger.info('AdminNotification créée pour mission PENDING %s', mission_id)
 
 
+STANDARD_MISSION_NOTIFICATION_DELAY_SECONDS = 600
+
+STANDARD_MISSION_NOTIFICATION_BODY = (
+    'Une nouvelle mission a été publiée ! Elle est désormais disponible pour vous '
+    '(Passez Premium pour y accéder 10 min avant les autres !)'
+)
+
+
+def _agent_has_active_boost(user) -> bool:
+    from apps.boosts.models import AgentBoost
+
+    now = timezone.now()
+    return AgentBoost.objects.filter(
+        agent=user,
+        status='active',
+        expires_at__gt=now,
+    ).exists()
+
+
+@shared_task
+def send_delayed_notification(mission_id: str, agent_ids: list):
+    """
+    Notifie les agents standard 10 min après publication d'une mission.
+    Ignore les agents ayant activé un boost entre-temps.
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.accounts.models import AgentProfile
+    from apps.core.choices import AgentKYCStatus, MissionStatus
+    from apps.missions.models import Mission
+    from apps.notifications.services import NotificationService
+
+    User = get_user_model()
+
+    try:
+        mission = Mission.objects.get(pk=mission_id)
+    except Mission.DoesNotExist:
+        logger.warning('send_delayed_notification: mission %s introuvable', mission_id)
+        return
+
+    if mission.agent_id is not None:
+        logger.info(
+            'send_delayed_notification: mission %s déjà assignée, notifications ignorées',
+            mission_id,
+        )
+        return
+
+    if mission.status != MissionStatus.PENDING:
+        logger.info(
+            'send_delayed_notification: mission %s statut=%s, notifications ignorées',
+            mission_id,
+            mission.status,
+        )
+        return
+
+    title = 'Nouvelle mission disponible'
+    body = STANDARD_MISSION_NOTIFICATION_BODY
+    data = {
+        'type': 'NEW_MISSION',
+        'mission_id': str(mission.id),
+        'delay_minutes': '0',
+        'tier': 'standard',
+    }
+
+    if not agent_ids:
+        return
+
+    agents = User.objects.filter(
+        pk__in=agent_ids,
+        is_agent=True,
+        is_active=True,
+    )
+    sent = 0
+    for agent in agents:
+        profile = AgentProfile.objects.filter(user=agent).first()
+        if not profile or profile.kyc_status != AgentKYCStatus.APPROVED:
+            continue
+        if _agent_has_active_boost(agent):
+            continue
+        NotificationService.send_to_user(agent, title, body, data=data)
+        NotificationService.create_in_app_notification(agent, title, body, data=data)
+        sent += 1
+
+    logger.info(
+        'send_delayed_notification: mission=%s notifications standard envoyées=%s',
+        mission_id,
+        sent,
+    )
+
+
 @shared_task
 def cleanup_expired_missions():
     """Nettoyage périodique des missions expirées (placeholder Celery beat)."""

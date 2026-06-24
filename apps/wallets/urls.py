@@ -7,6 +7,7 @@ from .views import (
     wallet_export_pdf_view,
     wallet_transactions_view,
     wallet_withdraw_view,
+    feexpay_payment_status_view,
 )
 
 urlpatterns = [
@@ -14,6 +15,7 @@ urlpatterns = [
     path('transactions/', wallet_transactions_view, name='wallet-transactions'),
     path('deposit/', wallet_deposit_view, name='wallet-deposit'),
     path('withdraw/', wallet_withdraw_view, name='wallet-withdraw'),
+    path('payment-status/<str:reference>/', feexpay_payment_status_view, name='feexpay-payment-status'),
     path('export/pdf/', wallet_export_pdf_view, name='wallet-export-pdf'),
     path('export/csv/', wallet_export_csv_view, name='wallet-export-csv'),
 ]

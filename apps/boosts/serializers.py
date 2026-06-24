@@ -1,20 +1,60 @@
 from rest_framework import serializers
-from .models import BoostPlan, AgentBoost
+from .models import BoostPlan, AgentBoost, BoostPromotion
 from apps.accounts.serializers import UserSerializer
+from django.utils import timezone
 
 
 class BoostPlanSerializer(serializers.ModelSerializer):
-    """Serializer pour les plans de boost"""
+    """Serializer pour les plans de boost avec application des promotions actives"""
     duration_display = serializers.ReadOnlyField()
+    discounted_price = serializers.SerializerMethodField()
+    active_promotion = serializers.SerializerMethodField()
     
     class Meta:
         model = BoostPlan
         fields = [
             'id', 'name', 'duration_hours', 'duration_display',
-            'price', 'description', 'visibility_multiplier',
+            'price', 'discounted_price', 'active_promotion',
+            'description', 'visibility_multiplier',
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+    
+    def get_discounted_price(self, obj):
+        """Calcule le prix avec réduction si une promo est active"""
+        try:
+            active_promo = BoostPromotion.objects.filter(
+                boost_plan=obj,
+                is_active=True,
+                start_date__lte=timezone.now(),
+                end_date__gte=timezone.now()
+            ).first()
+            
+            if active_promo:
+                return active_promo.get_discounted_price()
+        except Exception:
+            pass
+        return obj.price
+    
+    def get_active_promotion(self, obj):
+        """Retourne les détails de la promotion active si applicable"""
+        try:
+            active_promo = BoostPromotion.objects.filter(
+                boost_plan=obj,
+                is_active=True,
+                start_date__lte=timezone.now(),
+                end_date__gte=timezone.now()
+            ).first()
+            
+            if active_promo:
+                return {
+                    'discount_percentage': active_promo.discount_percentage,
+                    'start_date': active_promo.start_date.isoformat(),
+                    'end_date': active_promo.end_date.isoformat(),
+                }
+        except Exception:
+            pass
+        return None
 
 
 class AgentBoostSerializer(serializers.ModelSerializer):

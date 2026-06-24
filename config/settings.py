@@ -38,18 +38,33 @@ SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-if DEBUG:
-    ALLOWED_HOSTS = ["*", "192.168.1.73", "localhost", "127.0.0.1"]
-    CORS_ALLOW_ALL_ORIGINS = True
-else:
-    ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+# AUDIT FIX [P0/P1] — ALLOWED_HOSTS et CORS stricts même en DEBUG
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=["localhost", "127.0.0.1", "192.168.1.73", "192.168.11.121"],
+)
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://192.168.1.73:8000",
+        "http://192.168.11.121:8000",
+    ],
+)
 
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS",
-    default=["http://192.168.1.73:8000", "http://localhost:8000"],
+    default=[
+        "http://192.168.11.121:8000",
+        "http://192.168.1.73:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
 )
 # Application definition
 
@@ -68,6 +83,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'channels', # Pour les WebSockets
     'fcm_django',
+    'django_ratelimit', # Rate limiting
 
     # Local Apps (nos modules — AppConfig explicites)
     'apps.core.apps.CoreConfig',
@@ -82,6 +98,7 @@ INSTALLED_APPS = [
     'apps.chat.apps.ChatConfig',
     
     # NOUVELLES APPS
+    'rest_framework_simplejwt.token_blacklist',
     'apps.ai_search.apps.AiSearchConfig',
     'apps.opportunities.apps.OpportunitiesConfig',
     'apps.boosts.apps.BoostsConfig',
@@ -89,6 +106,7 @@ INSTALLED_APPS = [
     'apps.statistics.apps.StatisticsConfig',
     'apps.leboncoin.apps.LeboncoinConfig',
     'apps.ratings.apps.RatingsConfig',
+    'apps.finance.apps.FinanceConfig',
 
     #celery
     'django_celery_results',
@@ -143,8 +161,8 @@ else:
         "default": {
             "ENGINE": "django.contrib.gis.db.backends.postgis",
             "NAME": env("POSTGRES_DB", default="fonaqo_db"),
-            "USER": env("POSTGRES_USER", default="root"),
-            "PASSWORD": env("POSTGRES_PASSWORD", default="postgres"),
+            "USER": env("POSTGRES_USER", default="fonaqo"),
+            "PASSWORD": env("POSTGRES_PASSWORD", default="change-me"),
             "HOST": env("POSTGRES_HOST", default="localhost"),
             "PORT": env("POSTGRES_PORT", default="5432"),
         }
@@ -202,6 +220,18 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 
 ASGI_APPLICATION = "config.asgi.application" # Pour les WebSockets (daphne)
 
+# Cache configuration for rate limiting (Redis)
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": env("REDIS_URL", default="redis://127.0.0.1:6379/1"),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+        "KEY_PREFIX": "fonaqo",
+    }
+}
+
 # Pour le développement local (nécessite Redis installé ou via Docker)
 CHANNEL_LAYERS = {
     "default": {
@@ -233,6 +263,9 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 
     # 4. AUTHENTICATION & THROTTLING
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
@@ -267,11 +300,24 @@ EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=False)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@fonaco.com')
+# Emails alertes staff (CSV). Si vide → emails des comptes is_staff actifs.
+ADMIN_ALERT_EMAILS = [
+    e.strip() for e in env('ADMIN_ALERT_EMAILS', default='').split(',') if e.strip()
+]
 
 CELERY_BEAT_SCHEDULE = {
     'cleanup-missions-every-30-mins': {
         'task': 'apps.missions.tasks.cleanup_expired_missions',
         'schedule': crontab(minute='*/30'),
+    },
+    # AUDIT FIX [P2] — Cleanup TypingStatus orphelins
+    'cleanup-typing-status': {
+        'task': 'apps.chat.tasks.cleanup_expired_typing_statuses',
+        'schedule': 60.0,
+    },
+    'reconcile-wallet-ledger-nightly': {
+        'task': 'apps.finance.tasks.reconcile_wallet_ledger',
+        'schedule': crontab(hour=2, minute=0),
     },
 }
 
@@ -286,23 +332,57 @@ if os.path.exists(FIREBASE_KEY_PATH):
 # Mistral AI Configuration (Recherche IA)
 MISTRAL_API_KEY = env("MISTRAL_API_KEY", default="")
 
-# FeexPay (Mobile Money Bénin)
+# FeexPay (Mobile Money Bénin + Carte) — lire depuis .env UNIQUEMENT
+FEEXPAY_SHOP_ID = env('FEEXPAY_SHOP_ID', default='')
 FEEXPAY_API_KEY = env('FEEXPAY_API_KEY', default='')
+FEEXPAY_API_TOKEN = env('FEEXPAY_API_TOKEN', default=FEEXPAY_API_KEY)
 FEEXPAY_WEBHOOK_SECRET = env('FEEXPAY_WEBHOOK_SECRET', default='')
-FEEXPAY_BASE_URL = env('FEEXPAY_BASE_URL', default='https://api.feexpay.me/backend')
-FEEXPAY_CALLBACK_URL = env('FEEXPAY_CALLBACK_URL', default='')
-FEEXPAY_SANDBOX = env.bool('FEEXPAY_SANDBOX', default=True)
+FEEXPAY_MODE = env('FEEXPAY_MODE', default='SANDBOX')
+FEEXPAY_CALLBACK_BASE_URL = env(
+    'FEEXPAY_CALLBACK_BASE_URL',
+    default=env('FEEXPAY_CALLBACK_URL', default='http://localhost:8000'),
+)
+FEEXPAY_CALLBACK_URL = FEEXPAY_CALLBACK_BASE_URL
+FEEXPAY_SANDBOX = FEEXPAY_MODE.upper() != 'LIVE'
+FEEXPAY_BASE_URL = env('FEEXPAY_BASE_URL', default='https://api.feexpay.me')
+FEEXPAY_PAYMENT_LOCAL_URL = f'{FEEXPAY_BASE_URL}/api/orders/online/kkiapay'
+FEEXPAY_PAYMENT_CARD_URL = f'{FEEXPAY_BASE_URL}/api/orders/online/card'
+FEEXPAY_PAYMENT_STATUS_URL = f'{FEEXPAY_BASE_URL}/api/orders/status'
 FEEXPAY_CHECKOUT_URL_TEMPLATE = env('FEEXPAY_CHECKOUT_URL_TEMPLATE', default='')
 
 # Vitrine web invité
 SITE_BASE_URL = env('SITE_BASE_URL', default='http://localhost:8000')
 GOOGLE_PLACES_API_KEY = env('GOOGLE_PLACES_API_KEY', default='')
 
+# Limites upload — AUDIT FIX [P0]
+UPLOAD_MAX_SIZE_MB = env.int('UPLOAD_MAX_SIZE_MB', default=env.int('DATA_UPLOAD_MAX_MB', default=10))
+UPLOAD_ALLOWED_IMAGE_TYPES = env.list(
+    'UPLOAD_ALLOWED_IMAGE_TYPES',
+    default=['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+)
+UPLOAD_ALLOWED_AUDIO_TYPES = env.list(
+    'UPLOAD_ALLOWED_AUDIO_TYPES',
+    default=['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg'],
+)
+UPLOAD_ALLOWED_DOC_TYPES = env.list(
+    'UPLOAD_ALLOWED_DOC_TYPES',
+    default=['application/pdf'],
+)
+MAX_EXPORT_ROWS = env.int('MAX_EXPORT_ROWS', default=1000)
+_UPLOAD_MAX_MB = UPLOAD_MAX_SIZE_MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = _UPLOAD_MAX_MB * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = _UPLOAD_MAX_MB * 1024 * 1024
+
+# JWT — lifetimes configurables depuis .env
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=env.int('JWT_ACCESS_MINUTES', default=30 * 24 * 60)  # 30 jours dev, 60 min prod
+    ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=env.int('JWT_REFRESH_DAYS', default=365)  # 7 en prod
+    ),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    'BLACKLIST_AFTER_ROTATION': env.bool('JWT_BLACKLIST', default=False),
     'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': SECRET_KEY,

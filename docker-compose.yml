@@ -56,9 +56,9 @@ services:
 
   maildev:
     image: maildev/maildev:2.1.0
-    expose:
-      - "1025"
-      - "1080"
+    ports:
+      - "1025:1025"
+      - "1080:1080"
     networks:
       - fonaqo_network
 

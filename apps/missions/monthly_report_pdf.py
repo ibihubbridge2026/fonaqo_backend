@@ -21,8 +21,12 @@ def _fmt_fcfa(amount):
     return f'{val:,}'.replace(',', ' ') + ' FCFA'
 
 
-def build_agent_monthly_report_pdf(user, month_str, transactions, totals):
+def build_agent_monthly_report_pdf(
+    user, month_str, transactions, totals, report_ref=None,
+):
     """Construit le PDF binaire du relevé mensuel."""
+    if not report_ref:
+        report_ref = f'FNQ-REL-{month_str.replace("-", "")}-{int(timezone.now().timestamp())}'
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -69,7 +73,7 @@ def build_agent_monthly_report_pdf(user, month_str, transactions, totals):
 
     elements.append(
         Paragraph(
-            f'<b>FONAQO</b> &nbsp;&nbsp; Relevé N° FNQ-REL-{month_str.replace("-", "")}-0042',
+            f'<b>FONAQO</b> &nbsp;&nbsp; Relevé N° {report_ref}',
             styles['Normal'],
         )
     )
@@ -111,8 +115,31 @@ def build_agent_monthly_report_pdf(user, month_str, transactions, totals):
     elements.append(info_table)
     elements.append(Spacer(1, 14))
 
+    mission_stats = [
+        ['Missions effectuées', str(totals.get('completed_missions', 0))],
+        ['Total gagné (missions)', _fmt_fcfa(totals.get('mission_earnings', 0))],
+        ['Commissions prélevées', _fmt_fcfa(totals.get('commissions_withheld', 0))],
+        ['Dépenses boost', _fmt_fcfa(totals.get('boost_spend', 0))],
+    ]
     elements.append(
-        Paragraph('<b>2. MOUVEMENTS DU COMPTE — Dépôts &amp; Retraits</b>', section_style)
+        Paragraph('<b>2. SYNTHÈSE MISSIONS DU MOIS</b>', section_style)
+    )
+    elements.append(Spacer(1, 6))
+    stats_table = Table(mission_stats, colWidths=[3.5 * inch, 2.0 * inch])
+    stats_table.setStyle(
+        TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFF9E6')),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ])
+    )
+    elements.append(stats_table)
+    elements.append(Spacer(1, 14))
+
+    elements.append(
+        Paragraph('<b>3. MOUVEMENTS DU COMPTE — Dépôts &amp; Retraits</b>', section_style)
     )
     elements.append(Spacer(1, 6))
 

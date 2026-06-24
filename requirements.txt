@@ -74,6 +74,8 @@ django-simple-history
 djangorestframework-simplejwt
 drf-spectacular
 faker
+django-ratelimit==4.1.0
+django-redis
 
 # AI & Audio dependencies
 jsonschema>=4.23.0
@@ -83,4 +85,6 @@ pydub>=0.25.0
 numpy>=1.21.0
 scikit-learn>=1.0.0
 geopy>=2.2.0
-reportlab>=4.0.0qrcode[pil]>=7.4.2
+reportlab>=4.0.0
+qrcode[pil]>=7.4.2
+python-magic==0.4.27

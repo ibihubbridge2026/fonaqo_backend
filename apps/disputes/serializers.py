@@ -35,6 +35,19 @@ class DisputeCreateSerializer(serializers.ModelSerializer):
     model = Dispute
     fields = ('mission', 'title', 'description', 'priority', 'evidence_file')
 
+  def validate_mission(self, mission):
+    # AUDIT FIX [P0] — Empêcher l'ouverture de litige sur la mission d'un autre user
+    user = self.context['request'].user
+    is_participant = (
+      mission.client_id == user.pk
+      or (mission.agent_id and mission.agent_id == user.pk)
+    )
+    if not is_participant:
+      raise serializers.ValidationError(
+        'Vous ne participez pas à cette mission.',
+      )
+    return mission
+
   def create(self, validated_data):
     validated_data['opened_by'] = self.context['request'].user
     return super().create(validated_data)

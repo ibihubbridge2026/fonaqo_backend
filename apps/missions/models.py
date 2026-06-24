@@ -7,6 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
 from simple_history.models import HistoricalRecords
 from apps.core.choices import AgentLevelName, MissionStatus
+from apps.core.validators import validate_audio_upload, validate_image_upload
 
 # --- SYSTÈME DE TAGS & EXPERTISES (Point 5) ---
 class Tag(models.Model):
@@ -97,17 +98,30 @@ class Mission(models.Model):
         null=True,
         blank=True,
         verbose_name="Description vocale (audio)",
+        validators=[validate_audio_upload],  # AUDIT FIX [P0]
     )
     purchase_released = models.BooleanField(default=False, help_text="Indique si le montant des achats a déjà été transféré à l'agent")
+    loyalty_points_awarded = models.BooleanField(
+        default=False,
+        help_text="True une fois que les points de fidélité ont été attribués au client (idempotent)"
+    )
     
     price_negotiation_allowed = models.BooleanField(
         default=False,
         help_text="Le client autorise l'agent à proposer un nouveau tarif via le chat",
     )
 
-    # Preuves
-    start_photo = models.ImageField(upload_to='missions/proofs/start/', null=True, blank=True)
-    end_photo = models.ImageField(upload_to='missions/proofs/end/', null=True, blank=True)
+    # Preuves — AUDIT FIX [P0] validation MIME/extension
+    start_photo = models.ImageField(
+        upload_to='missions/proofs/start/',
+        null=True, blank=True,
+        validators=[validate_image_upload],
+    )
+    end_photo = models.ImageField(
+        upload_to='missions/proofs/end/',
+        null=True, blank=True,
+        validators=[validate_image_upload],
+    )
 
     # Notation bidirectionnelle
     client_rating = models.IntegerField(
@@ -127,6 +141,22 @@ class Mission(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['client', 'status']),
+            models.Index(fields=['agent', 'status']),
+            # AUDIT FIX [P1/P2] — indexes manquants
+            models.Index(
+                fields=['target_agent_username'],
+                name='mission_target_agent_idx',
+            ),
+            models.Index(
+                fields=['status', 'agent', 'created_at'],
+                name='mission_status_agent_date_idx',
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         if not self.qr_code_token:
@@ -162,18 +192,6 @@ class MissionTimeline(models.Model):
 
     def __str__(self):
         return f"Timeline {self.status} - {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
-
-# --- MATCHING & RECOMMENDATION (Point 4) ---
-class MissionRecommendation(models.Model):
-    mission = models.ForeignKey(Mission, on_delete=models.CASCADE)
-    agent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    score = models.FloatField() # Calculé par l'IA de matching
-    reason = models.CharField(max_length=255) # Ex: "Proximité + Niveau Expert"
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        agent_name = self.agent.username or self.agent.email or f"Agent-{self.agent.id}"
-        return f"Recommendation {agent_name} → {self.mission.title[:30]}{'...' if len(self.mission.title) > 30 else ''}"
 
 # --- BOOSTS (Point 6) ---
 class BoostPlan(models.Model):

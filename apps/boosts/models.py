@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
@@ -38,6 +40,18 @@ class BoostPlan(models.Model):
             days = self.duration_hours // 24
             return f"{days} jour(s)"
         return f"{self.duration_hours} heures"
+
+    @property
+    def duration_days(self) -> int:
+        """Alias lisible — dérivé de duration_hours."""
+        if self.duration_hours >= 24:
+            return max(1, self.duration_hours // 24)
+        return 1
+
+    @property
+    def price_fcfa(self):
+        """Alias explicite pour l'API / admin."""
+        return self.price
 
 
 class AgentBoost(models.Model):
@@ -141,3 +155,56 @@ class AgentBoost(models.Model):
 
     def __str__(self):
         return f"Boost {self.plan.name if self.plan else 'Inconnu'} - Agent {self.agent.username if self.agent else 'Inconnu'}"
+
+
+class BoostPromotion(models.Model):
+    """
+    Promotions temporaires sur les plans de boost
+    Permet d'appliquer des réductions dynamiques sur les plans existants
+    """
+    boost_plan = models.ForeignKey(
+        BoostPlan,
+        on_delete=models.CASCADE,
+        related_name='promotions',
+        verbose_name="Plan de boost"
+    )
+    discount_percentage = models.PositiveIntegerField(
+        verbose_name="Pourcentage de réduction",
+        help_text="Valeur entre 0 et 100"
+    )
+    start_date = models.DateTimeField(
+        verbose_name="Date de début"
+    )
+    end_date = models.DateTimeField(
+        verbose_name="Date de fin"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Actif"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Date de création")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Date de modification")
+
+    class Meta:
+        verbose_name = "Promotion Boost"
+        verbose_name_plural = "Promotions Boost"
+        ordering = ['-start_date']
+
+    def __str__(self):
+        return f"{self.boost_plan.name} -{self.discount_percentage}% ({self.start_date} → {self.end_date})"
+
+    @property
+    def is_currently_active(self):
+        """Vérifie si la promotion est active à la date actuelle"""
+        now = timezone.now()
+        return (
+            self.is_active and
+            self.start_date <= now <= self.end_date
+        )
+
+    def get_discounted_price(self):
+        """Calcule le prix avec réduction appliquée"""
+        if not self.is_currently_active:
+            return self.boost_plan.price
+        discount_amount = self.boost_plan.price * Decimal(str(self.discount_percentage)) / Decimal('100')
+        return self.boost_plan.price - discount_amount

@@ -27,6 +27,7 @@ from apps.escrow.services import EscrowService
 from apps.core.choices import EscrowStatus
 from apps.chat.views import send_system_message
 from apps.notifications.services import NotificationService
+from apps.accounts.permissions import IsAgent, IsClient
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -107,19 +108,11 @@ def _agent_has_active_boost(user):
     ).exists()
 
 
-_ACTIVE_MISSION_STATUSES = (
-    'ACCEPTED',
-    'ON_THE_WAY',
-    'ARRIVED',
-    'IN_PROGRESS',
-    'IN_PROGRESS_REVIEW',
-)
-
-
 def _count_agent_active_missions(user):
+    from apps.missions.status_policy import AGENT_ACTIVE_MISSION_STATUSES
     return Mission.objects.filter(
         agent=user,
-        status__in=_ACTIVE_MISSION_STATUSES,
+        status__in=AGENT_ACTIVE_MISSION_STATUSES,
     ).count()
 
 
@@ -179,29 +172,57 @@ def _agent_can_accept_more(user):
 
 
 def _notify_agents_new_mission(mission):
-    """Push FCM + notification in-app aux agents KYC approuvés."""
+    """Push FCM + notification in-app : boost immédiat, standard différé 10 min."""
+    import logging
+
     from apps.accounts.models import AgentProfile
     from apps.core.choices import AgentKYCStatus
-    from apps.core.services import PlatformConfigService
-
-    delay_min = PlatformConfigService.agent_mission_delay_minutes()
-    title = 'Nouvelle mission disponible'
-    body = (
-        f'{mission.title[:100]} — visible dans votre panier '
-        f'dans {delay_min} min (priorité boost).'
+    from apps.missions.tasks import (
+        STANDARD_MISSION_NOTIFICATION_DELAY_SECONDS,
+        send_delayed_notification,
     )
-    data = {
+
+    logger = logging.getLogger(__name__)
+
+    title_boost = 'Nouvelle mission disponible'
+    body_boost = f'{mission.title[:100]} — accès immédiat (priorité boost).'
+    data_boost = {
         'type': 'NEW_MISSION',
         'mission_id': str(mission.id),
-        'delay_minutes': str(delay_min),
+        'delay_minutes': '0',
+        'tier': 'boost',
     }
+
+    standard_agent_ids = []
     agents = User.objects.filter(is_agent=True, is_active=True)
     for agent in agents:
         profile, _ = AgentProfile.objects.get_or_create(user=agent)
         if profile.kyc_status != AgentKYCStatus.APPROVED:
             continue
-        NotificationService.send_to_user(agent, title, body, data=data)
-        NotificationService.create_in_app_notification(agent, title, body, data=data)
+        if _agent_has_active_boost(agent):
+            NotificationService.send_to_user(
+                agent, title_boost, body_boost, data=data_boost,
+            )
+            NotificationService.create_in_app_notification(
+                agent, title_boost, body_boost, data=data_boost,
+            )
+        else:
+            standard_agent_ids.append(str(agent.id))
+
+    if not standard_agent_ids:
+        return
+
+    try:
+        send_delayed_notification.apply_async(
+            args=[str(mission.id), standard_agent_ids],
+            countdown=STANDARD_MISSION_NOTIFICATION_DELAY_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            'Notification différée mission %s non planifiée (Celery indisponible): %s',
+            mission.id,
+            exc,
+        )
 
 
 def _notify_mission_event(user, title, body, event_type, mission_id):
@@ -249,11 +270,15 @@ class MissionViewSet(viewsets.ViewSet):
     def list(self, request):
         user = request.user
         if user.is_agent:
+            # Filtrer: missions publiques OU missions ciblées pour cet agent
+            username = (user.username or '').strip()
             qs = Mission.objects.filter(
                 status='PENDING', agent__isnull=True
-            ).select_related('client', 'agent').order_by('-created_at')
+            ).filter(
+                Q(target_agent_username__isnull=True) | Q(target_agent_username='') | Q(target_agent_username__iexact=username)
+            ).select_related('client', 'agent').prefetch_related('tags').order_by('-created_at')
         else:
-            qs = Mission.objects.filter(client=user).select_related('client', 'agent').order_by('-created_at')
+            qs = Mission.objects.filter(client=user).select_related('client', 'agent').prefetch_related('tags').order_by('-created_at')
 
         # Apply pagination
         paginator = self.pagination_class()
@@ -280,6 +305,11 @@ class MissionViewSet(viewsets.ViewSet):
         return Response(MissionDetailSerializer(mission, context={'request': request}).data)
 
     def create(self, request):
+        if not getattr(request.user, 'is_client', False):
+            return Response(
+                {'status': 'error', 'message': 'Seuls les clients peuvent créer une mission.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = MissionCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             mission = serializer.save()
@@ -397,16 +427,10 @@ class MissionViewSet(viewsets.ViewSet):
                 {'message': 'Réservé aux agents'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        active_statuses = [
-            'ACCEPTED',
-            'ON_THE_WAY',
-            'ARRIVED',
-            'IN_PROGRESS',
-            'IN_PROGRESS_REVIEW',
-        ]
+        from apps.missions.status_policy import AGENT_ACTIVE_MISSION_STATUSES
         qs = Mission.objects.filter(
             agent=user,
-            status__in=active_statuses,
+            status__in=AGENT_ACTIVE_MISSION_STATUSES,
         ).order_by('-updated_at')
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(qs, request)
@@ -1440,7 +1464,7 @@ class MissionProofViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], permission_classes=[IsAgent])
     def bulk_create(self, request):
         """Créer plusieurs preuves en une fois"""
         serializer = MissionProofBulkCreateSerializer(data=request.data)
@@ -1449,11 +1473,6 @@ class MissionProofViewSet(viewsets.ModelViewSet):
             proofs_data = serializer.validated_data['proofs']
 
             user = request.user
-            if not user.is_agent:
-                return Response(
-                    {'error': 'Seuls les agents peuvent ajouter des preuves'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
             
             created_proofs = []
             for proof_data in proofs_data:
@@ -1556,12 +1575,10 @@ class AgentStatisticsViewSet(viewsets.ModelViewSet):
             return AgentStatistics.objects.filter(agent=user)
         return AgentStatistics.objects.none()
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[IsAgent])
     def dashboard_stats(self, request):
         """Statistiques du dashboard agent"""
         user = request.user
-        if not user.is_agent:
-            return Response({'error': 'Réservé aux agents'}, status=status.HTTP_403_FORBIDDEN)
 
         today = timezone.now().date()
         week_start = today - timedelta(days=today.weekday())
@@ -1645,12 +1662,10 @@ class AgentStatisticsViewSet(viewsets.ModelViewSet):
         serializer = AgentDashboardStatsSerializer(dashboard_data)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], permission_classes=[IsAgent])
     def update_stats(self, request):
         """Mettre à jour les statistiques"""
         user = request.user
-        if not user.is_agent:
-            return Response({'error': 'Réservé aux agents'}, status=status.HTTP_403_FORBIDDEN)
 
         total_missions = Mission.objects.filter(agent=user).count()
         completed_missions = Mission.objects.filter(agent=user, status='COMPLETED').count()
@@ -1668,64 +1683,126 @@ class AgentStatisticsViewSet(viewsets.ModelViewSet):
 
         return Response({'message': 'Statistiques mises à jour', 'stats': AgentStatisticsSerializer(stats).data})
 
-    @action(detail=False, methods=['get'], url_path='monthly_report', renderer_classes=[])
+    @action(detail=False, methods=['get'], url_path='monthly_report', permission_classes=[IsAgent])
     def monthly_report(self, request):
         """PDF relevé mensuel agent (wallet + missions)."""
+        import logging
+        logger = logging.getLogger(__name__)
         user = request.user
-        if not user.is_agent:
-            return Response(
-                {'message': 'Réservé aux agents'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
 
-        month_str = request.query_params.get('month') or timezone.now().strftime('%Y-%m')
         try:
-            from datetime import datetime as dt
-            year, month = map(int, month_str.split('-'))
-            start_date = timezone.make_aware(dt(year, month, 1))
-            if month == 12:
-                end_date = timezone.make_aware(dt(year + 1, 1, 1))
-            else:
-                end_date = timezone.make_aware(dt(year, month + 1, 1))
-        except (ValueError, IndexError):
-            return Response(
-                {'message': 'Format de mois invalide (YYYY-MM)'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from apps.wallets.models import Wallet, Transaction as WalletTransaction
-        from apps.missions.monthly_report_pdf import build_agent_monthly_report_pdf
-
-        wallet = Wallet.objects.filter(user=user).first()
-        transactions = []
-        deposits = Decimal('0')
-        withdrawals = Decimal('0')
-
-        if wallet:
-            transactions = list(
-                WalletTransaction.objects.filter(
-                    wallet=wallet,
-                    created_at__gte=start_date,
-                    created_at__lt=end_date,
-                    status='COMPLETED',
-                ).order_by('created_at')
-            )
-            for tx in transactions:
-                amt = Decimal(str(tx.amount))
-                if amt >= 0:
-                    deposits += amt
+            month_str = request.query_params.get('month') or timezone.now().strftime('%Y-%m')
+            try:
+                from datetime import datetime as dt
+                year, month = map(int, month_str.split('-'))
+                start_date = timezone.make_aware(dt(year, month, 1))
+                if month == 12:
+                    end_date = timezone.make_aware(dt(year + 1, 1, 1))
                 else:
-                    withdrawals += abs(amt)
+                    end_date = timezone.make_aware(dt(year, month + 1, 1))
+            except (ValueError, IndexError):
+                return Response(
+                    {
+                        'error': 'INVALID_MONTH_FORMAT',
+                        'message': 'Format de mois invalide (attendu : YYYY-MM).',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        totals = {
-            'deposits': deposits,
-            'withdrawals': withdrawals,
-            'net': deposits - withdrawals,
-        }
-        pdf_bytes = build_agent_monthly_report_pdf(user, month_str, transactions, totals)
-        response = HttpResponse(pdf_bytes, content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="releve_{month_str}.pdf"'
-        return response
+            from apps.core.choices import TransactionStatus
+            from apps.wallets.models import Wallet, Transaction as WalletTransaction
+            from apps.missions.monthly_report_pdf import build_agent_monthly_report_pdf
+            from apps.escrow.models import EscrowSplitRecord
+            from apps.missions.models import MissionTimelineEvent
+
+            wallet = Wallet.objects.filter(user=user).first()
+            transactions = []
+            deposits = Decimal('0')
+            withdrawals = Decimal('0')
+            mission_earnings = Decimal('0')
+            boost_spend = Decimal('0')
+
+            if wallet:
+                transactions = list(
+                    WalletTransaction.objects.filter(
+                        wallet=wallet,
+                        created_at__gte=start_date,
+                        created_at__lt=end_date,
+                        status=TransactionStatus.COMPLETED,
+                    ).order_by('created_at')
+                )
+                for tx in transactions:
+                    amt = Decimal(str(tx.amount))
+                    if amt >= 0:
+                        deposits += amt
+                        if tx.transaction_type == WalletTransaction.TransactionType.ESCROW_RELEASE:
+                            mission_earnings += amt
+                    else:
+                        withdrawals += abs(amt)
+                        if tx.transaction_type == WalletTransaction.TransactionType.BOOST_PAYMENT:
+                            boost_spend += abs(amt)
+
+            completed_mission_ids = MissionTimelineEvent.objects.filter(
+                mission__agent=user,
+                mission__status='COMPLETED',
+                event_type__in=['completed', 'validated'],
+                occurred_at__gte=start_date,
+                occurred_at__lt=end_date,
+            ).values_list('mission_id', flat=True).distinct()
+            completed_missions = len(set(completed_mission_ids))
+
+            commissions_withheld = EscrowSplitRecord.objects.filter(
+                mission__agent=user,
+                mission__status='COMPLETED',
+                mission_id__in=completed_mission_ids,
+            ).exclude(
+                beneficiary_type=EscrowSplitRecord.BeneficiaryType.AGENT,
+            ).aggregate(total=Sum('amount_fcfa'))['total'] or Decimal('0')
+
+            totals = {
+                'deposits': deposits,
+                'withdrawals': withdrawals,
+                'net': deposits - withdrawals,
+                'mission_earnings': mission_earnings,
+                'completed_missions': completed_missions,
+                'commissions_withheld': commissions_withheld,
+                'boost_spend': boost_spend,
+            }
+
+            wallet_id_fragment = str(wallet.id).replace('-', '')[:8] if wallet else '00000000'
+            report_ref = (
+                f'FNQ-REL-{month_str.replace("-", "")}-'
+                f'{wallet_id_fragment}-{int(timezone.now().timestamp())}'
+            )
+
+            pdf_bytes = build_agent_monthly_report_pdf(
+                user,
+                month_str,
+                transactions,
+                totals,
+                report_ref=report_ref,
+            )
+            from io import BytesIO
+
+            buffer = BytesIO(pdf_bytes)
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type='application/pdf',
+            )
+            response['Content-Disposition'] = (
+                f'attachment; filename="releve_mensuel_{month_str}.pdf"'
+            )
+            response['Content-Length'] = str(len(pdf_bytes))
+            return response
+        except Exception as exc:
+            logger.exception('monthly_report failed for user=%s', user.id)
+            return Response(
+                {
+                    'error': 'PDF_GENERATION_FAILED',
+                    'message': f'Échec génération du relevé mensuel : {exc}',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 @api_view(['POST'])

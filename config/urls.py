@@ -4,6 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from rest_framework.permissions import AllowAny, IsAdminUser
 
 from apps.core.vitrine_views import (
     VitrineAgentPublicView,
@@ -50,11 +51,30 @@ urlpatterns = [
     path('vitrine/agent/<uuid:agent_id>/', VitrineAgentPublicView.as_view(), name='vitrine-agent-public'),
     path('api/v1/', include(api_v1_patterns)),
     path('api/v2/', include(api_v2_patterns)),
-    
-    # Documentation API
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
 ]
+
+# AUDIT FIX [P0] — Documentation API protégée hors DEBUG
+if settings.DEBUG:
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    ]
+else:
+    urlpatterns += [
+        path(
+            'api/schema/',
+            SpectacularAPIView.as_view(permission_classes=[IsAdminUser]),
+            name='schema',
+        ),
+        path(
+            'api/docs/',
+            SpectacularSwaggerView.as_view(
+                url_name='schema',
+                permission_classes=[IsAdminUser],
+            ),
+            name='swagger-ui',
+        ),
+    ]
 
 # Fichiers statiques : static/ live en DEBUG ; staticfiles/ collectés sinon (voir collectstatic au démarrage Docker)
 if settings.DEBUG:

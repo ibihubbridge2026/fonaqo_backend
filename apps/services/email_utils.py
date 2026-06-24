@@ -113,9 +113,11 @@ def is_maildev_available():
     """
     try:
         import socket
+        host = getattr(settings, 'EMAIL_HOST', 'localhost') or 'localhost'
+        port = int(getattr(settings, 'EMAIL_PORT', 1025) or 1025)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # Timeout de 2 secondes
-        result = sock.connect_ex(('localhost', 1025))
+        sock.settimeout(2)
+        result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
     except Exception:

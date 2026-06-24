@@ -15,4 +15,6 @@ urlpatterns = [
     path('feexpay/init/', feexpay_init_view, name='feexpay-init'),
     path('feexpay/confirm/', feexpay_confirm_view, name='feexpay-confirm'),
     path('feexpay/webhook/', feexpay_webhook_view, name='feexpay-webhook'),
+    # AUDIT FIX [P0] — alias callback FeexPay
+    path('feexpay/callback/', feexpay_webhook_view, name='feexpay-callback'),
 ]

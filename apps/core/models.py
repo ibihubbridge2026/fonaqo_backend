@@ -77,6 +77,36 @@ class AdminNotification(models.Model):
         return f'[{self.category}] {self.title}'
 
 
+class StaffConciergeNote(models.Model):
+    """Notes internes staff — mémos conciergerie / support."""
+
+    author = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='concierge_notes',
+    )
+    content = models.TextField()
+    admin_notification = models.ForeignKey(
+        AdminNotification,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='concierge_notes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = _('note conciergerie')
+        verbose_name_plural = _('notes conciergerie')
+
+    def __str__(self):
+        return f'Note {self.id} — {self.content[:40]}'
+
+
 class AdminAuditLog(models.Model):
     """Journal des actions SuperAdmin (panel web + API staff)."""
 

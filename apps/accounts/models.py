@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from decimal import Decimal
 
@@ -9,6 +10,26 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
 from apps.core.choices import AgentKYCStatus, AgentBadgeStatus, KYCStatus
+
+
+class _UuidUpload:
+    """Callable upload_to sérialisable qui renomme chaque fichier avec un UUID."""
+
+    def __init__(self, subdir):
+        self.subdir = subdir
+
+    def __call__(self, instance, filename):
+        ext = os.path.splitext(filename)[1].lower()
+        return f'{self.subdir}/{uuid.uuid4().hex}{ext}'
+
+    def deconstruct(self):
+        return ('apps.accounts.models._UuidUpload', [self.subdir], {})
+
+
+def _uuid_upload(subdir):
+    """Retourne un callable upload_to UUID sérialisable par les migrations."""
+    return _UuidUpload(subdir)
+
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -141,13 +162,13 @@ class AgentProfile(models.Model):
     )
     id_card_photo = models.ImageField(
         _('photo recto pièce d\'identité'),
-        upload_to='kyc/agent_ids/',
+        upload_to=_uuid_upload('kyc/agent_ids'),
         blank=True,
         null=True,
     )
     selfie_photo = models.ImageField(
         _('selfie avec pièce'),
-        upload_to='kyc/agent_selfies/',
+        upload_to=_uuid_upload('kyc/agent_selfies'),
         blank=True,
         null=True,
     )
@@ -180,7 +201,7 @@ class AgentProfile(models.Model):
     )
     badge_photo = models.ImageField(
         _('photo badge professionnel'),
-        upload_to='badges/photos/',
+        upload_to=_uuid_upload('badges/photos'),
         blank=True,
         null=True,
     )
@@ -223,6 +244,14 @@ class AgentProfile(models.Model):
         _('score de classement'),
         default=0.0,
         help_text=_('Score métier calculé pour le classement des agents (0-100)'),
+    )
+    manager = models.ForeignKey(
+        'TeamManager',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agents',
+        verbose_name=_('manager de brigade'),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -318,6 +347,53 @@ class Influencer(models.Model):
         return start + timezone.timedelta(days=int(self.duration_years) * 365)
 
 
+class TeamManager(models.Model):
+    """Manager de brigade — supervise un groupe d'agents, perçoit 2 % sur leurs missions."""
+
+    name = models.CharField(_('nom'), max_length=150)
+    commission_rate = models.DecimalField(
+        _('taux de commission'),
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.02'),
+        help_text=_('Part du montant brut mission perçue par le manager (ex: 0.02 = 2 %)'),
+    )
+    max_agents = models.PositiveIntegerField(
+        _('capacité brigade'),
+        default=10,
+        help_text=_('Nombre maximum d\'agents dans la brigade'),
+    )
+    earnings_balance = models.DecimalField(
+        _('solde commissions'),
+        max_digits=12,
+        decimal_places=0,
+        default=0,
+    )
+    bio = models.TextField(_('présentation'), blank=True, default='')
+    portal_user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='team_manager_portal',
+        verbose_name=_('compte portail'),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('manager de brigade')
+        verbose_name_plural = _('managers de brigade')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def agent_count(self):
+        return self.agents.count()
+
+
 class ClientRewardProfile(models.Model):
     """Profil de fidélité client — points, niveaux et badges."""
 
@@ -386,6 +462,69 @@ class ClientRewardProfile(models.Model):
             if self.points >= threshold:
                 self.level = 11 - i
                 break
+
+    def deduct_points(self, points: int, reason: str = ''):
+        """Déduit des points du client."""
+        if self.points < points:
+            raise ValueError(f'Solde insuffisant: {self.points} points, requis: {points}')
+        self.points -= points
+        self.save(update_fields=['points', 'updated_at'])
+
+
+class RewardItem(models.Model):
+    """Catalogue de récompenses échangeables contre des points."""
+    REWARD_TYPES = [
+        ('DISCOUNT', _('Réduction mission')),
+        ('FREE_MISSION', _('Mission gratuite')),
+        ('BONUS', _('Bonus portefeuille')),
+        ('GIFT', _('Cadeau physique')),
+    ]
+
+    name = models.CharField(_('nom'), max_length=200)
+    description = models.TextField(_('description'), blank=True)
+    reward_type = models.CharField(_('type'), max_length=20, choices=REWARD_TYPES)
+    points_cost = models.IntegerField(_('coût en points'), validators=[MinValueValidator(1)])
+    value_fcfa = models.DecimalField(_('valeur FCFA'), max_digits=10, decimal_places=2, null=True, blank=True)
+    icon = models.CharField(_('icône emoji'), max_length=10, blank=True)
+    is_active = models.BooleanField(_('actif'), default=True)
+    stock = models.IntegerField(_('stock disponible'), null=True, blank=True, help_text=_('Null = illimité'))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('récompense')
+        verbose_name_plural = _('récompenses')
+        ordering = ['points_cost']
+
+    def __str__(self):
+        return f'{self.name} ({self.points_cost} pts)'
+
+
+class RewardRedemption(models.Model):
+    """Historique des redemptions de récompenses par les clients."""
+    STATUS_CHOICES = [
+        ('PENDING', _('En attente')),
+        ('APPROVED', _('Approuvé')),
+        ('REJECTED', _('Rejeté')),
+        ('COMPLETED', _('Complété')),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reward_redemptions')
+    reward = models.ForeignKey(RewardItem, on_delete=models.PROTECT, related_name='redemptions')
+    points_spent = models.IntegerField(_('points dépensés'))
+    status = models.CharField(_('statut'), max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    notes = models.TextField(_('notes'), blank=True)
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_redemptions')
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('redemption')
+        verbose_name_plural = _('redemptions')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.user.username} → {self.reward.name} ({self.status})'
 
 
 class InfluencerWithdrawalStatus(models.TextChoices):

@@ -123,7 +123,11 @@ class AdminClientsView(StaffRequiredMixin, TemplateView):
 
         ctx = super().get_context_data(**kwargs)
         ctx['active_nav'] = 'clients'
-        clients_qs = ClientProfile.objects.select_related('user', 'influencer').order_by('-created_at')
+        clients_qs = ClientProfile.objects.select_related('user', 'influencer').annotate(
+            missions_total=Count('user__missions_ordered', distinct=True),
+            missions_done=Count('user__missions_ordered', filter=Q(user__missions_ordered__status='COMPLETED'), distinct=True),
+            missions_disputed=Count('user__missions_ordered', filter=Q(user__missions_ordered__status='DISPUTED'), distinct=True),
+        ).order_by('-created_at')
         ctx['clients'] = clients_qs[:100]
         ctx['stats'] = {
             'total': clients_qs.count(),
@@ -156,6 +160,32 @@ class AdminArtisansView(StaffRequiredMixin, TemplateView):
             'total': artisans_qs.count(),
             'featured': artisans_qs.filter(is_featured=True).count(),
             'cities': artisans_qs.values('city').distinct().count(),
+        }
+        return ctx
+
+
+class AdminManagersView(StaffRequiredMixin, TemplateView):
+    template_name = 'super_admin/gestion_managers.html'
+    staff_nav = 'managers'
+
+    def get_context_data(self, **kwargs):
+        from apps.accounts.models import TeamManager
+        from django.db.models import Count, Q
+        ctx = super().get_context_data(**kwargs)
+        ctx['active_nav'] = 'managers'
+        managers = TeamManager.objects.annotate(
+            agents_total=Count('agents', distinct=True),
+            completed_missions=Count(
+                'agents__user__missions_assigned',
+                filter=Q(agents__user__missions_assigned__status='COMPLETED'),
+                distinct=True,
+            ),
+        ).order_by('-created_at')
+        ctx['managers'] = managers
+        ctx['stats'] = {
+            'total': managers.count(),
+            'total_agents': sum(m.agents_total for m in managers),
+            'total_balance': sum(float(m.earnings_balance) for m in managers),
         }
         return ctx
 
@@ -336,6 +366,17 @@ class AdminAuditView(StaffRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['active_nav'] = 'audit'
+        return ctx
+
+
+class AdminActivityView(StaffRequiredMixin, TemplateView):
+    """Historique complet activité live (pagination)."""
+    template_name = 'super_admin/activite.html'
+    staff_nav = 'activity'
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['active_nav'] = 'activity'
         return ctx
 
 

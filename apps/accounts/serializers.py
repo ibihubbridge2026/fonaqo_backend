@@ -397,6 +397,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "last_name",
             "username",
             "phone_number",
+            "email",
             "profile_picture",
             "city",
             "address",
@@ -411,7 +412,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "witness_2_phone",
             "bio",
         )
-        read_only_fields = ("phone_number", "email")
+        read_only_fields = ("phone_number",)
         error_messages = {
             'required': 'Ce champ est obligatoire.',
         }

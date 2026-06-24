@@ -15,6 +15,14 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=0)
 
     external_reference = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    provider_transaction_id = models.CharField(
+        max_length=100,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="ID de transaction unique du fournisseur de paiement (FeexPay, FedaPay, etc.) pour idempotency"
+    )
     payment_method = models.CharField(max_length=50, blank=True)
     purpose = models.CharField(
         max_length=30,

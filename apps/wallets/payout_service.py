@@ -10,6 +10,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.choices import PayoutRequestStatus, TransactionStatus
+from apps.finance import ledger_integration
 
 from .models import PayoutRequest, Transaction, Wallet
 
@@ -64,13 +65,24 @@ class PayoutService:
 
     @classmethod
     @transaction.atomic
-    def approve(cls, payout: PayoutRequest, *, admin_user) -> PayoutRequest:
+    def approve(cls, payout: PayoutRequest, *, admin_user, provider_transaction_id: str = None) -> PayoutRequest:
         payout = PayoutRequest.objects.select_for_update().get(pk=payout.pk)
 
         if payout.status != PayoutRequestStatus.PENDING:
             raise PayoutServiceError(
                 f'Demande déjà traitée (statut {payout.status}).',
             )
+
+        # Idempotency : vérifier si ce provider_transaction_id a déjà été utilisé
+        if provider_transaction_id:
+            existing = PayoutRequest.objects.filter(
+                provider_transaction_id=provider_transaction_id,
+                status=PayoutRequestStatus.COMPLETED
+            ).first()
+            if existing:
+                raise PayoutServiceError(
+                    f'Ce provider_transaction_id a déjà été utilisé pour la demande {existing.id}.'
+                )
 
         wallet = Wallet.objects.select_for_update().get(pk=payout.wallet_id)
 
@@ -94,13 +106,23 @@ class PayoutService:
             ),
         )
 
+        ledger_integration.record_payout_approved(
+            user_id=wallet.user_id,
+            amount=payout.amount,
+            payout_id=payout.id,
+            wallet_transaction_id=ledger.id,
+            reference=ledger.reference,
+        )
+
         payout.status = PayoutRequestStatus.COMPLETED
         payout.ledger_transaction = ledger
         payout.processed_by = admin_user
         payout.processed_at = timezone.now()
+        if provider_transaction_id:
+            payout.provider_transaction_id = provider_transaction_id
         payout.save(update_fields=[
             'status', 'ledger_transaction', 'processed_by',
-            'processed_at', 'updated_at',
+            'processed_at', 'provider_transaction_id', 'updated_at',
         ])
         return payout
 

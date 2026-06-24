@@ -1,0 +1,337 @@
+{% extends "super_admin/base_admin.html" %}
+{% block title %}Managers de Brigade{% endblock %}
+{% block content %}
+
+<div class="fq-hero" style="margin-bottom:24px">
+  <div>
+    <h2>Managers de Brigade</h2>
+    <p>{{ stats.total }} brigade{{ stats.total|pluralize }} · {{ stats.total_agents }} agent{{ stats.total_agents|pluralize }} assigné{{ stats.total_agents|pluralize }} · Solde total {{ stats.total_balance|floatformat:0 }} FCFA</p>
+  </div>
+  {% if is_super_admin %}
+  <button type="button" data-admin-action="open-manager-create" class="fq-btn fq-btn-primary fq-btn-sm">+ Créer une brigade</button>
+  {% endif %}
+</div>
+
+<!-- Tableau des managers -->
+<section class="fq-card overflow-hidden mb-6">
+  <div class="fq-table-wrap">
+    <table class="fq-table">
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Brigade</th>
+          <th>Missions complétées</th>
+          <th>Commission</th>
+          <th>Solde accumulé</th>
+          <th>Créé le</th>
+          <th class="text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in managers %}
+        <tr>
+          <td class="font-semibold">{{ m.name }}</td>
+          <td>
+            <span class="fq-badge fq-badge-default">{{ m.agents_total }} / {{ m.max_agents }}</span>
+            <div class="w-24 h-1.5 bg-[var(--fq-outline-variant)] rounded-full mt-1 overflow-hidden">
+              <div class="h-full bg-[var(--fq-yellow)] rounded-full"
+                   style="width:{% widthratio m.agents_total m.max_agents 100 %}%"></div>
+            </div>
+          </td>
+          <td class="mono">{{ m.completed_missions }}</td>
+          <td class="mono">{{ m.commission_rate|floatformat:0 }}% &nbsp;<span class="text-xs text-[var(--fq-muted)]">({{ m.commission_rate|floatformat:2 }})</span></td>
+          <td class="mono font-semibold">{{ m.earnings_balance|floatformat:0 }} FCFA</td>
+          <td class="text-xs">{{ m.created_at|date:"d/m/Y" }}</td>
+          <td class="text-right">
+            <button type="button"
+              data-admin-action="view-manager"
+              data-manager-id="{{ m.id }}"
+              data-manager-name="{{ m.name }}"
+              class="fq-btn fq-btn-ghost fq-btn-sm">
+              Voir brigade
+            </button>
+            {% if is_super_admin %}
+            <button type="button"
+              data-admin-action="delete-manager"
+              data-manager-id="{{ m.id }}"
+              data-manager-name="{{ m.name }}"
+              class="fq-btn fq-btn-ghost fq-btn-sm text-red-500">
+              Supprimer
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7"><div class="fq-empty">Aucune brigade créée.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─── MODAL DÉTAIL MANAGER ─────────────────────────────────────────────── -->
+<div id="modal-manager" class="fq-modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div class="fq-modal" style="max-width:780px;width:95vw">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--fq-border)">
+      <h3 id="modal-manager-title" style="font-size:17px;font-weight:700;margin:0">Brigade</h3>
+      <button type="button" data-close-modal="modal-manager"
+        style="width:32px;height:32px;border-radius:50%;border:1px solid var(--fq-border);background:transparent;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--fq-muted)">✕</button>
+    </div>
+    <div style="padding:24px" class="space-y-6">
+      <!-- KPIs brigade -->
+      <div class="grid grid-cols-3 gap-3" id="modal-manager-kpis">
+        <div class="fq-stat-card p-4 text-center">
+          <p class="fq-stat-label">Agents</p>
+          <p class="fq-stat-value text-lg" id="mgr-kpi-agents">—</p>
+        </div>
+        <div class="fq-stat-card p-4 text-center">
+          <p class="fq-stat-label">Missions complétées</p>
+          <p class="fq-stat-value text-lg" id="mgr-kpi-missions">—</p>
+        </div>
+        <div class="fq-stat-card p-4 text-center">
+          <p class="fq-stat-label">Solde accumulé</p>
+          <p class="fq-stat-value text-lg" id="mgr-kpi-balance">—</p>
+        </div>
+      </div>
+
+      <!-- Assignation agent libre -->
+      {% if is_super_admin %}
+      <div class="fq-card fq-card-padded">
+        <h4 class="font-semibold mb-3">Assigner un agent libre</h4>
+        <div class="flex gap-2">
+          <input type="text" id="agent-search-input" placeholder="Rechercher par nom, username ou code…"
+                 class="fq-input flex-1" autocomplete="off">
+          <button type="button" id="agent-search-btn" class="fq-btn fq-btn-secondary fq-btn-sm">Rechercher</button>
+        </div>
+        <div id="agent-search-results" class="mt-3 space-y-2 max-h-48 overflow-y-auto"></div>
+      </div>
+      {% endif %}
+
+      <!-- Tableau agents de la brigade -->
+      <div>
+        <h4 class="font-semibold mb-3">Agents de la brigade</h4>
+        <div class="fq-table-wrap">
+          <table class="fq-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Code</th>
+                <th>KYC</th>
+                <th>Note</th>
+                <th>Missions</th>
+                <th>Litiges</th>
+                {% if is_super_admin %}<th></th>{% endif %}
+              </tr>
+            </thead>
+            <tbody id="modal-manager-agents">
+              <tr><td colspan="7" class="text-center py-6 text-[var(--fq-muted)]">Chargement…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── MODAL CRÉER MANAGER ─────────────────────────────────────────────── -->
+<div id="modal-manager-create" class="fq-modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div class="fq-modal" style="max-width:480px;width:95vw">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--fq-border)">
+      <div>
+        <h3 style="font-size:17px;font-weight:700;margin:0">Créer une brigade</h3>
+        <p style="font-size:12px;color:var(--fq-muted);margin:2px 0 0">Renseignez les informations du manager</p>
+      </div>
+      <button type="button" data-close-modal="modal-manager-create"
+        style="width:32px;height:32px;border-radius:50%;border:1px solid var(--fq-border);background:transparent;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--fq-muted)">✕</button>
+    </div>
+    <div style="padding:24px">
+      <form id="form-manager-create" style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label class="fq-label">Nom du manager / brigade</label>
+          <input type="text" name="name" class="fq-input" required placeholder="Ex : Brigade Nord">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label class="fq-label">Taux commission</label>
+            <div style="position:relative">
+              <input type="number" name="commission_rate" class="fq-input" value="0.02" step="0.001" min="0" max="0.5" style="padding-right:40px">
+              <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--fq-muted);pointer-events:none">%×</span>
+            </div>
+            <p style="font-size:11px;color:var(--fq-muted);margin-top:4px">Ex : 0.02 = 2 %</p>
+          </div>
+          <div>
+            <label class="fq-label">Capacité max agents</label>
+            <input type="number" name="max_agents" class="fq-input" value="10" min="1" max="100">
+            <p style="font-size:11px;color:var(--fq-muted);margin-top:4px">Max agents brigade</p>
+          </div>
+        </div>
+        <div>
+          <label class="fq-label">Bio <span style="color:var(--fq-muted);font-weight:400">(optionnel)</span></label>
+          <textarea name="bio" class="fq-input" rows="2" placeholder="Présentation courte du manager" style="resize:vertical"></textarea>
+        </div>
+        <button type="submit" class="fq-btn fq-btn-primary" style="width:100%;margin-top:4px">
+          Créer la brigade
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  let _currentManagerId = null;
+
+  async function staffFetch(url, opts = {}) {
+    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf(), ...(opts.headers || {}) };
+    const r = await fetch(url, { credentials: 'include', ...opts, headers });
+    let body = null;
+    try { body = await r.json(); } catch (_) {}
+    return { ok: r.ok, status: r.status, body };
+  }
+
+  function getCsrf() {
+    return document.cookie.split('; ').find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+  }
+
+  function parseData(body) {
+    if (!body) return null;
+    return body.data ?? body;
+  }
+
+  function showToast(msg, isErr) {
+    if (window.FonacoAdmin?.showToast) return window.FonacoAdmin.showToast(msg, isErr);
+    alert(msg);
+  }
+
+  function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('hidden');
+  }
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  }
+
+  async function loadManagerDetail(managerId, managerName) {
+    _currentManagerId = managerId;
+    document.getElementById('modal-manager-title').textContent = 'Brigade — ' + managerName;
+    document.getElementById('modal-manager-agents').innerHTML =
+      '<tr><td colspan="7" class="text-center py-6 text-[var(--fq-muted)]">Chargement…</td></tr>';
+    openModal('modal-manager');
+
+    const { ok, body } = await staffFetch(`/api/v1/staff/managers/${managerId}/`);
+    const data = parseData(body);
+    if (!ok || !data) { showToast('Erreur chargement brigade', true); return; }
+
+    document.getElementById('mgr-kpi-agents').textContent = `${data.agent_count} / ${data.max_agents}`;
+    document.getElementById('mgr-kpi-missions').textContent = data.completed_missions ?? '—';
+    document.getElementById('mgr-kpi-balance').textContent =
+      Number(data.earnings_balance).toLocaleString('fr-FR') + ' FCFA';
+
+    renderAgentTable(data.agents || []);
+  }
+
+  function renderAgentTable(agents) {
+    const isSuperAdmin = {{ is_super_admin|yesno:"true,false" }};
+    const tbody = document.getElementById('modal-manager-agents');
+    if (!agents.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-[var(--fq-muted)]">Brigade vide.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = agents.map(a => `
+      <tr>
+        <td class="font-semibold">${a.name} <span class="text-[var(--fq-muted)] text-xs">@${a.username}</span></td>
+        <td class="mono text-xs">${a.agent_code || '—'}</td>
+        <td><span class="fq-badge fq-badge-${a.kyc_status === 'VERIFIED' ? 'completed' : 'default'} text-xs">${a.kyc_status}</span></td>
+        <td class="mono">${Number(a.average_rating).toFixed(1)} ★</td>
+        <td class="mono">${a.completed_missions}</td>
+        <td class="mono text-red-500">${a.disputed_missions}</td>
+        ${isSuperAdmin ? `<td><button type="button" class="fq-btn fq-btn-ghost fq-btn-sm text-red-500"
+            onclick="unassignAgent(${a.profile_id || "'"+a.id+"'"})">Retirer</button></td>` : '<td></td>'}
+      </tr>`).join('');
+  }
+
+  window.unassignAgent = async function (profileId) {
+    if (!_currentManagerId || !confirm('Retirer cet agent de la brigade ?')) return;
+    const { ok } = await staffFetch(`/api/v1/staff/managers/${_currentManagerId}/unassign/`,
+      { method: 'POST', body: JSON.stringify({ profile_id: profileId }) });
+    showToast(ok ? 'Agent retiré' : 'Erreur', !ok);
+    if (ok) {
+      const row = document.querySelector(`[onclick="unassignAgent(${profileId})"]`)?.closest('tr');
+      row?.remove();
+      location.reload();
+    }
+  };
+
+  async function searchFreeAgents() {
+    const q = document.getElementById('agent-search-input').value.trim();
+    const container = document.getElementById('agent-search-results');
+    container.innerHTML = '<p class="text-xs text-[var(--fq-muted)]">Recherche…</p>';
+    const { ok, body } = await staffFetch(`/api/v1/staff/managers/agents/free/?q=${encodeURIComponent(q)}`);
+    const data = parseData(body);
+    const results = data?.results || [];
+    if (!ok || !results.length) {
+      container.innerHTML = '<p class="text-xs text-[var(--fq-muted)]">Aucun agent libre trouvé.</p>';
+      return;
+    }
+    container.innerHTML = results.map(a => `
+      <div class="flex items-center justify-between p-2 rounded-lg bg-[var(--fq-surface-container-low)] border border-[var(--fq-outline-variant)]">
+        <div>
+          <span class="font-semibold text-sm">${a.name}</span>
+          <span class="text-xs text-[var(--fq-muted)]"> @${a.username} · ${a.agent_code || '—'}</span>
+        </div>
+        <button type="button" class="fq-btn fq-btn-primary fq-btn-sm"
+          onclick="assignAgent(${a.profile_id}, '${a.name.replace(/'/g, "\\'")}')">Assigner</button>
+      </div>`).join('');
+  }
+
+  window.assignAgent = async function (profileId, agentName) {
+    if (!_currentManagerId) return;
+    const { ok, body } = await staffFetch(`/api/v1/staff/managers/${_currentManagerId}/assign/`,
+      { method: 'POST', body: JSON.stringify({ profile_id: profileId }) });
+    const data = parseData(body);
+    const errMsg = data?.error || data?.message || 'Erreur assignation';
+    showToast(ok ? `${agentName} assigné à la brigade` : errMsg, !ok);
+    if (ok) { document.getElementById('agent-search-results').innerHTML = ''; location.reload(); }
+  };
+
+  document.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-admin-action]');
+    if (!el) return;
+    const action = el.getAttribute('data-admin-action');
+
+    if (action === 'view-manager') {
+      loadManagerDetail(el.getAttribute('data-manager-id'), el.getAttribute('data-manager-name'));
+    }
+    if (action === 'open-manager-create') openModal('modal-manager-create');
+    if (action === 'delete-manager') {
+      const id = el.getAttribute('data-manager-id');
+      const name = el.getAttribute('data-manager-name');
+      if (!confirm(`Supprimer la brigade "${name}" ? Les agents seront libérés.`)) return;
+      const { ok } = await staffFetch(`/api/v1/staff/managers/${id}/`, { method: 'DELETE' });
+      showToast(ok ? `Brigade ${name} supprimée` : 'Erreur', !ok);
+      if (ok) el.closest('tr')?.remove();
+    }
+    const closeTarget = el.getAttribute('data-close-modal');
+    if (closeTarget) closeModal(closeTarget);
+  });
+
+  document.getElementById('agent-search-btn')?.addEventListener('click', searchFreeAgents);
+  document.getElementById('agent-search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); searchFreeAgents(); }
+  });
+
+  document.getElementById('form-manager-create')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = { name: fd.get('name'), commission_rate: fd.get('commission_rate'),
+                      max_agents: fd.get('max_agents'), bio: fd.get('bio') };
+    const { ok, body } = await staffFetch('/api/v1/staff/managers/', { method: 'POST', body: JSON.stringify(payload) });
+    const data = parseData(body);
+    const errMsg = data?.error || data?.message || 'Erreur création';
+    showToast(ok ? `Brigade "${payload.name}" créée !` : errMsg, !ok);
+    if (ok) { closeModal('modal-manager-create'); location.reload(); }
+  });
+})();
+</script>
+{% endblock %}

@@ -47,3 +47,39 @@ class WithdrawalResponseSerializer(serializers.Serializer):
     channel = serializers.CharField()
     status = serializers.CharField()
     message = serializers.CharField()
+
+
+class WalletDepositSerializer(serializers.Serializer):
+    """Serializer pour recharge wallet via FeexPay."""
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=100)
+    phone_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    network = serializers.ChoiceField(
+        choices=['MTN', 'MOOV', 'CELTIIS', 'AIRTEL', 'ORANGE'],
+        default='MTN',
+        required=False,
+    )
+    payment_method = serializers.ChoiceField(
+        choices=['MOBILE', 'CARD', 'FEEXPAY', 'MOBILE_MONEY'],
+        default='MOBILE',
+        required=False,
+    )
+    card_type = serializers.ChoiceField(
+        choices=['VISA', 'MASTERCARD'],
+        required=False,
+        allow_null=True,
+    )
+    payment_reference = serializers.CharField(
+        max_length=100, required=False, allow_blank=True,
+    )
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+        cleaned = value.replace(' ', '').replace('+', '').replace('-', '')
+        if not cleaned.isdigit():
+            raise serializers.ValidationError('Numéro de téléphone invalide')
+        if len(cleaned) < 8 or len(cleaned) > 15:
+            raise serializers.ValidationError(
+                'Numéro de téléphone entre 8 et 15 chiffres'
+            )
+        return cleaned

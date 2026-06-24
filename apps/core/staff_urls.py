@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import kyc_views, staff_views
+from apps.finance import staff_views as finance_staff_views
 
 urlpatterns = [
     # KYC
@@ -37,6 +38,16 @@ urlpatterns = [
     ),
     # Audit
     path('audit-log/', staff_views.audit_log, name='staff-audit-log'),
+    path('notifications/', staff_views.admin_notifications_list, name='staff-notifications'),
+    path('notifications/unread-count/', staff_views.admin_notifications_unread_count, name='staff-notifications-unread'),
+    path('notifications/mark-all-read/', staff_views.admin_notifications_mark_all_read, name='staff-notifications-mark-all'),
+    path('notifications/<int:notification_id>/read/', staff_views.admin_notification_mark_read, name='staff-notification-read'),
+    # Ledger audit
+    path('ledger/', finance_staff_views.ledger_entries_list, name='staff-ledger-list'),
+    path('ledger/export/', finance_staff_views.ledger_export_csv, name='staff-ledger-export'),
+    path('ledger/reconciliation/', finance_staff_views.ledger_reconciliation_runs, name='staff-ledger-reconciliation'),
+    path('ledger/balance/<uuid:user_id>/', finance_staff_views.ledger_user_balance, name='staff-ledger-balance'),
+    path('ledger/<uuid:entry_id>/', finance_staff_views.ledger_entry_detail, name='staff-ledger-detail'),
     # Influenceurs
     path('influencers/', staff_views.influencers_list_create, name='staff-influencers'),
     path(
@@ -75,24 +86,32 @@ urlpatterns = [
         name='staff-influencer-withdrawal-reject',
     ),
     # Boosts
-    path(
-        'boosts/plans/<int:plan_id>/',
-        staff_views.boost_plan_update,
-        name='staff-boost-plan-update',
-    ),
+    path('boosts/plans/', staff_views.boost_plans_list_create, name='staff-boost-plans'),
+    path('boosts/plans/<int:plan_id>/', staff_views.boost_plan_update, name='staff-boost-plan-update'),
     path(
         'boosts/<int:boost_id>/cancel/',
         staff_views.boost_cancel,
         name='staff-boost-cancel',
     ),
+    path('boosts/promotions/', staff_views.boost_promotions_list_create, name='staff-boost-promotions'),
+    path('boosts/promotions/<int:promo_id>/', staff_views.boost_promotion_update, name='staff-boost-promotion-update'),
     path('wallet/summary/', staff_views.platform_wallet_summary, name='staff-wallet-summary'),
+    path('wallet/export/', staff_views.wallet_export, name='staff-wallet-export'),
+    path('concierge-notes/', staff_views.concierge_notes, name='staff-concierge-notes'),
     path('artisans/', staff_views.artisan_create, name='staff-artisan-create'),
     path('artisans/<uuid:listing_id>/revoke/', staff_views.artisan_revoke, name='staff-artisan-revoke'),
     path('agents/<int:profile_id>/toggle-internal/', staff_views.agent_toggle_internal, name='staff-agent-toggle-internal'),
     path('badges/queue/', staff_views.badge_queue, name='staff-badge-queue'),
     path('badges/<int:profile_id>/approve/', staff_views.badge_approve, name='staff-badge-approve'),
+    path('badges/<int:profile_id>/download/', staff_views.badge_download, name='staff-badge-download'),
     path('badges/<int:profile_id>/reject/', staff_views.badge_reject, name='staff-badge-reject'),
+    path('managers/', staff_views.managers_list_create, name='staff-managers'),
+    path('managers/agents/free/', staff_views.agents_free, name='staff-agents-free'),
+    path('managers/<int:manager_id>/', staff_views.manager_detail, name='staff-manager-detail'),
+    path('managers/<int:manager_id>/assign/', staff_views.manager_assign_agent, name='staff-manager-assign'),
+    path('managers/<int:manager_id>/unassign/', staff_views.manager_unassign_agent, name='staff-manager-unassign'),
     path('staff-users/', staff_views.staff_users, name='staff-users'),
+    path('staff-users/<uuid:user_id>/delete/', staff_views.staff_user_delete, name='staff-user-delete'),
     path('me/', staff_views.staff_me, name='staff-me'),
     path('me/password/', staff_views.staff_change_password, name='staff-change-password'),
     path('users/<uuid:user_id>/suspend/', staff_views.user_suspend, name='staff-user-suspend'),

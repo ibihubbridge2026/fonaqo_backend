@@ -34,8 +34,13 @@ class LoyaltyService:
     @staticmethod
     @transaction.atomic
     def award_mission_points(mission: Mission):
-        """Attribue des points à un client pour une mission complétée."""
+        """Attribue des points à un client pour une mission complétée (idempotent)."""
         if mission.status != 'COMPLETED' or not mission.client:
+            return
+
+        # Idempotency: charger la mission avec verrou pour éviter double attribution
+        mission = Mission.objects.select_for_update().get(pk=mission.pk)
+        if mission.loyalty_points_awarded:
             return
 
         profile = LoyaltyService.get_or_create_profile(mission.client)
@@ -59,6 +64,9 @@ class LoyaltyService:
         LoyaltyService._check_and_unlock_badges(profile)
 
         profile.save(update_fields=['total_missions_completed', 'total_spent', 'badges_unlocked', 'updated_at'])
+
+        # Marquer la mission comme déjà traitée (idempotent)
+        Mission.objects.filter(pk=mission.pk).update(loyalty_points_awarded=True)
 
     @staticmethod
     def _check_and_unlock_badges(profile: ClientRewardProfile):

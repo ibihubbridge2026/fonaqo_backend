@@ -68,9 +68,9 @@
           {% include "super_admin/partials/icon.html" with name="missions" %}
           <span class="fq-nav-label">Missions</span>
         </a>
-        <a href="{% url 'admin-transactions' %}" class="fq-nav-link {% if nav == 'transactions' %}active{% endif %}" title="Transactions">
+        <a href="{% url 'admin-transactions' %}" class="fq-nav-link {% if nav == 'transactions' %}active{% endif %}" title="Retraits et Litiges">
           {% include "super_admin/partials/icon.html" with name="transactions" %}
-          <span class="fq-nav-label">Transactions</span>
+          <span class="fq-nav-label">Retraits et Litiges</span>
         </a>
         {% if is_super_admin %}
         <a href="{% url 'admin-wallet' %}" class="fq-nav-link {% if nav == 'wallet' %}active{% endif %}" title="Wallet plateforme">
@@ -80,10 +80,6 @@
         {% endif %}
 
         <p class="fq-nav-section">Croissance</p>
-        <a href="{% url 'admin-influencers' %}" class="fq-nav-link {% if nav == 'influencers' %}active{% endif %}" title="Influenceurs">
-          {% include "super_admin/partials/icon.html" with name="influencer" %}
-          <span class="fq-nav-label">Influenceurs</span>
-        </a>
         {% if is_super_admin %}
         <a href="{% url 'admin-boosts' %}" class="fq-nav-link {% if nav == 'boosts' %}active{% endif %}" title="Boost">
           {% include "super_admin/partials/icon.html" with name="rocket" %}
@@ -101,6 +97,10 @@
         <a href="{% url 'admin-config' %}" class="fq-nav-link {% if nav == 'config' %}active{% endif %}" title="Configuration">
           {% include "super_admin/partials/icon.html" with name="config" %}
           <span class="fq-nav-label">Configuration</span>
+        </a>
+        <a href="{% url 'admin-managers' %}" class="fq-nav-link {% if nav == 'managers' %}active{% endif %}" title="Managers de Brigade">
+          {% include "super_admin/partials/icon.html" with name="users" %}
+          <span class="fq-nav-label">Brigades</span>
         </a>
         <a href="{% url 'admin-staff' %}" class="fq-nav-link {% if nav == 'staff' %}active{% endif %}" title="Équipe Staff">
           {% include "super_admin/partials/icon.html" with name="users" %}
@@ -193,7 +193,7 @@
 
   {% include "super_admin/_admin_modals.html" %}
   <div id="admin-toast" class="fq-toast hidden" role="alert"></div>
-  <script src="{% static 'super_admin/admin.js' %}?v=20250624"></script>
+  <script src="{% static 'super_admin/admin.js' %}?v=20250625"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

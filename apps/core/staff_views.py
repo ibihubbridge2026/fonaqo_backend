@@ -123,13 +123,14 @@ def _build_influencer_detail(inf):
     }
 
 
+from apps.core.choices import MissionStatus
+from apps.missions.status_policy import (
+    AGENT_ACTIVE_MISSION_STATUSES,
+    CLIENT_ONGOING_MISSION_STATUSES,
+)
+
 _ACTIVE_MISSION_STATUSES = [
-    MissionStatus.PENDING,
-    MissionStatus.ACCEPTED,
-    MissionStatus.ON_THE_WAY,
-    MissionStatus.ARRIVED,
-    MissionStatus.IN_PROGRESS,
-    MissionStatus.IN_PROGRESS_REVIEW,
+    *CLIENT_ONGOING_MISSION_STATUSES,
     MissionStatus.DISPUTED,
 ]
 
@@ -139,38 +140,15 @@ def _err(message: str, code=status.HTTP_400_BAD_REQUEST):
 
 
 def _revenue_split_percentages():
-    """Répartition agent / plateforme / influenceur — config plateforme ou splits escrow."""
-    from apps.escrow.models import EscrowSplitRecord
-
+    """Répartition agent / plateforme / influenceur — toujours depuis la config plateforme."""
     agent_cfg = float(PlatformConfigService.get_decimal(SPLIT_AGENT_PCT_KEY, '88'))
     platform_cfg = float(PlatformConfigService.get_decimal(SPLIT_PLATFORM_PCT_KEY, '10'))
     influencer_cfg = float(PlatformConfigService.get_decimal(SPLIT_INFLUENCER_PCT_KEY, '2'))
-
-    bt = EscrowSplitRecord.BeneficiaryType
-    totals = {
-        bt.AGENT: EscrowSplitRecord.objects.filter(beneficiary_type=bt.AGENT).aggregate(
-            t=Sum('amount_fcfa'),
-        )['t'] or Decimal('0'),
-        bt.PLATFORM: EscrowSplitRecord.objects.filter(beneficiary_type=bt.PLATFORM).aggregate(
-            t=Sum('amount_fcfa'),
-        )['t'] or Decimal('0'),
-        bt.INFLUENCER: EscrowSplitRecord.objects.filter(beneficiary_type=bt.INFLUENCER).aggregate(
-            t=Sum('amount_fcfa'),
-        )['t'] or Decimal('0'),
-    }
-    grand = sum(totals.values())
-    if grand <= 0:
-        return {
-            'agent_pct': agent_cfg,
-            'platform_pct': platform_cfg,
-            'influencer_pct': influencer_cfg,
-            'configured': True,
-        }
     return {
-        'agent_pct': round(float(totals[bt.AGENT] / grand * 100), 1),
-        'platform_pct': round(float(totals[bt.PLATFORM] / grand * 100), 1),
-        'influencer_pct': round(float(totals[bt.INFLUENCER] / grand * 100), 1),
-        'configured': False,
+        'agent_pct': agent_cfg,
+        'platform_pct': platform_cfg,
+        'influencer_pct': influencer_cfg,
+        'configured': True,
     }
 
 
@@ -243,10 +221,13 @@ def dashboard_activity(request):
     from apps.core.models import AdminAuditLog
     from apps.missions.models import MissionTimelineEvent
 
-    limit = min(int(request.query_params.get('limit', 12)), 30)
+    limit = min(int(request.query_params.get('limit', 5)), 50)
+    page = max(int(request.query_params.get('page', 1)), 1)
     items = []
 
-    for notif in AdminNotification.objects.order_by('-created_at')[:limit]:
+    fetch_limit = min(max(limit * page, limit), 100)
+
+    for notif in AdminNotification.objects.order_by('-created_at')[:fetch_limit]:
         items.append({
             'timestamp': notif.created_at.isoformat(),
             'time': notif.created_at.strftime('%H:%M'),
@@ -256,7 +237,7 @@ def dashboard_activity(request):
             'severity': notif.severity,
         })
 
-    for entry in AdminAuditLog.objects.select_related('admin').order_by('-created_at')[:limit]:
+    for entry in AdminAuditLog.objects.select_related('admin').order_by('-created_at')[:fetch_limit]:
         who = entry.admin.username if entry.admin_id else 'system'
         items.append({
             'timestamp': entry.created_at.isoformat(),
@@ -270,7 +251,7 @@ def dashboard_activity(request):
     event_labels = dict(MissionTimelineEvent.EVENT_TYPE_CHOICES)
     for ev in MissionTimelineEvent.objects.select_related('mission', 'performed_by').order_by(
         '-occurred_at',
-    )[:limit]:
+    )[:fetch_limit]:
         who = ''
         if ev.performed_by_id:
             who = ev.performed_by.username
@@ -285,7 +266,17 @@ def dashboard_activity(request):
         })
 
     items.sort(key=lambda x: x['timestamp'], reverse=True)
-    return Response({'results': items[:limit], 'count': min(len(items), limit)})
+    total = len(items)
+    start = (page - 1) * limit
+    page_items = items[start:start + limit]
+    return Response({
+        'results': page_items,
+        'count': len(page_items),
+        'total': total,
+        'page': page,
+        'page_size': limit,
+        'has_more': start + limit < total,
+    })
 
 
 @api_view(['GET'])
@@ -325,18 +316,17 @@ def platform_config(request):
                 'id': p.id,
                 'name': p.name,
                 'price': float(p.price),
+                'price_fcfa': float(p.price),
                 'duration_hours': p.duration_hours,
+                'duration_days': p.duration_days,
                 'visibility_multiplier': float(p.visibility_multiplier),
                 'is_active': p.is_active,
+                'description': p.description,
             })
         split = _revenue_split_percentages()
         return Response({
             'FEES_URGENT': str(PlatformConfigService.get_decimal(FEES_URGENT_KEY, '500')),
             'FEES_CONFIDENTIAL': str(
-                PlatformConfigService.get_decimal(FEES_CONFIDENTIAL_KEY, '500'),
-            ),
-            'fees_urgent': int(PlatformConfigService.get_decimal(FEES_URGENT_KEY, '500')),
-            'fees_confidential': int(
                 PlatformConfigService.get_decimal(FEES_CONFIDENTIAL_KEY, '500'),
             ),
             'SPLIT_AGENT_PCT': str(PlatformConfigService.get_decimal(SPLIT_AGENT_PCT_KEY, '88')),
@@ -368,12 +358,34 @@ def platform_config(request):
             'Délai visibilité missions (minutes, agents non boost)',
         ),
     }
+
+    # Validation des pourcentages de split escrow
+    split_keys = ['SPLIT_AGENT_PCT', 'SPLIT_PLATFORM_PCT', 'SPLIT_INFLUENCER_PCT']
+    split_values = {}
+    for key in split_keys:
+        if key in payload:
+            try:
+                split_values[key] = float(payload[key])
+            except (ValueError, TypeError):
+                return _err(f'Valeur invalide pour {key}: doit être un nombre', status.HTTP_400_BAD_REQUEST)
+
+    if split_values:
+        total_pct = sum(split_values.values())
+        if abs(total_pct - 100.0) > 0.1:  # Tolérance de 0.1%
+            return _err(
+                f'La somme des pourcentages de split escrow doit être égale à 100% (actuel: {total_pct}%)',
+                status.HTTP_400_BAD_REQUEST
+            )
+
     for key, val in payload.items():
         if key not in config_map:
             continue
         cfg_key, desc = config_map[key]
-        PlatformConfigService.set_value(cfg_key, val, desc)
-        updated[cfg_key] = str(val)
+        try:
+            PlatformConfigService.set_value(cfg_key, val, desc)
+            updated[cfg_key] = str(val)
+        except Exception as e:
+            return _err(f'Erreur lors de la persistance de {cfg_key}: {str(e)}', status.HTTP_400_BAD_REQUEST)
 
     if not updated:
         return _err(
@@ -398,11 +410,16 @@ def payouts_pending(request):
 
     qs = PayoutRequest.objects.filter(
         status=PayoutRequestStatus.PENDING,
-    ).select_related('wallet__user').order_by('-created_at')[:100]
+    ).select_related('wallet__user__agent_profile__manager').order_by('-created_at')[:100]
 
     results = []
     for payout in qs:
         user = payout.wallet.user
+        mgr = None
+        try:
+            mgr = user.agent_profile.manager
+        except Exception:
+            pass
         results.append({
             'id': str(payout.id),
             'amount': float(payout.amount),
@@ -410,6 +427,7 @@ def payouts_pending(request):
             'username': user.username,
             'agent_name': user.get_full_name() or user.username,
             'user_id': str(user.id),
+            'manager_name': mgr.name if mgr else None,
             'payment_method': payout.payment_method,
             'phone_number': payout.phone_number,
             'created_at': payout.created_at.isoformat(),
@@ -493,23 +511,32 @@ def escrow_disputed(request):
     qs = Dispute.objects.exclude(
         status__in=[Dispute.Status.RESOLVED, Dispute.Status.CLOSED],
     ).select_related(
-        'mission__client', 'mission__agent', 'mission__escrow',
+        'mission__client', 'mission__agent__agent_profile__manager', 'mission__escrow',
     ).order_by('-created_at')[:100]
 
     results = []
     for d in qs:
         m = d.mission
         escrow = getattr(m, 'escrow', None)
+        agent_manager = None
+        if m.agent_id:
+            try:
+                agent_manager = m.agent.agent_profile.manager.name
+            except Exception:
+                pass
         results.append({
             'dispute_id': d.id,
             'mission_id': str(m.id),
             'mission_ref': str(m.id)[:8].upper(),
             'client': m.client.username or m.client.phone_number,
             'agent': m.agent.username if m.agent_id else None,
+            'agent_manager': agent_manager,
             'amount': float(escrow.amount) if escrow else float(m.price or 0),
             'escrow_status': escrow.status if escrow else '—',
             'status': d.status,
             'title': d.title,
+            'description': d.description,
+            'opened_by': d.opened_by.username if d.opened_by_id else None,
         })
     return Response({'results': results, 'count': len(results)})
 
@@ -694,6 +721,82 @@ def audit_log(request):
             'metadata': entry.metadata,
         })
     return Response({'results': rows, 'count': len(rows)})
+
+
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def admin_notifications_list(request):
+    """Alertes opérationnelles staff (ledger, litiges, sécurité…)."""
+    from apps.core.models import AdminNotification
+
+    limit = min(int(request.query_params.get('limit', 50)), 200)
+    unread_only = request.query_params.get('unread') == '1'
+    severity = request.query_params.get('severity', '').strip()
+    category = request.query_params.get('category', '').strip()
+
+    qs = AdminNotification.objects.order_by('-created_at')
+    if unread_only:
+        qs = qs.filter(is_read=False)
+    if severity:
+        qs = qs.filter(severity=severity)
+    if category:
+        qs = qs.filter(category=category)
+
+    rows = []
+    for n in qs[:limit]:
+        rows.append({
+            'id': n.id,
+            'category': n.category,
+            'severity': n.severity,
+            'title': n.title,
+            'message': n.message,
+            'is_read': n.is_read,
+            'metadata': n.metadata,
+            'mission_id': str(n.mission_id) if n.mission_id else None,
+            'created_at': n.created_at.isoformat(),
+        })
+
+    unread_count = AdminNotification.objects.filter(is_read=False).count()
+    return Response({
+        'results': rows,
+        'count': len(rows),
+        'unread_count': unread_count,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def admin_notifications_unread_count(request):
+    from apps.core.models import AdminNotification
+
+    return Response({
+        'unread_count': AdminNotification.objects.filter(is_read=False).count(),
+    })
+
+
+@api_view(['POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def admin_notification_mark_read(request, notification_id):
+    from apps.core.models import AdminNotification
+
+    notification = get_object_or_404(AdminNotification, pk=notification_id)
+    if not notification.is_read:
+        notification.is_read = True
+        notification.save(update_fields=['is_read'])
+    return Response({'id': notification.id, 'is_read': True})
+
+
+@api_view(['POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def admin_notifications_mark_all_read(request):
+    from apps.core.models import AdminNotification
+
+    updated = AdminNotification.objects.filter(is_read=False).update(is_read=True)
+    return Response({'marked_read': updated})
 
 
 # --- Influenceurs ---
@@ -942,6 +1045,59 @@ def influencer_link_portal_user(request, influencer_id):
 
 # --- Boosts staff ---
 
+def _serialize_boost_plan(plan) -> dict:
+    return {
+        'id': plan.id,
+        'name': plan.name,
+        'description': plan.description,
+        'price': float(plan.price),
+        'price_fcfa': float(plan.price_fcfa),
+        'duration_hours': plan.duration_hours,
+        'duration_days': plan.duration_days,
+        'duration_display': plan.duration_display,
+        'visibility_multiplier': float(plan.visibility_multiplier),
+        'is_active': plan.is_active,
+    }
+
+
+@api_view(['GET', 'POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def boost_plans_list_create(request):
+    from apps.boosts.models import BoostPlan
+
+    if request.method == 'GET':
+        plans = [_serialize_boost_plan(p) for p in BoostPlan.objects.order_by('price')]
+        return Response({'results': plans, 'count': len(plans)})
+
+    name = (request.data.get('name') or '').strip()
+    if not name:
+        return _err('name requis.')
+
+    duration_days = request.data.get('duration_days')
+    duration_hours = request.data.get('duration_hours')
+    if duration_days is not None and duration_hours is None:
+        duration_hours = int(duration_days) * 24
+    elif duration_hours is None:
+        duration_hours = 24
+
+    price = request.data.get('price_fcfa', request.data.get('price', 0))
+    plan = BoostPlan.objects.create(
+        name=name,
+        description=(request.data.get('description') or '').strip(),
+        price=Decimal(str(price)),
+        duration_hours=int(duration_hours),
+        visibility_multiplier=Decimal(str(request.data.get('visibility_multiplier', '1.5'))),
+        is_active=request.data.get('is_active', True) in (True, 'true', '1', 1),
+    )
+    log_admin_action(
+        request.user, 'BOOST_PLAN_CREATE',
+        target_type='BoostPlan', target_id=plan.id,
+        detail=plan.name,
+    )
+    return Response(_serialize_boost_plan(plan), status=status.HTTP_201_CREATED)
+
+
 @api_view(['PATCH'])
 @authentication_classes(_STAFF_AUTH)
 @permission_classes([IsAdminUser])
@@ -954,11 +1110,14 @@ def boost_plan_update(request, plan_id):
         if field in request.data:
             setattr(plan, field, request.data[field])
             fields.append(field)
-    if 'price' in request.data:
-        plan.price = Decimal(str(request.data['price']))
+    if 'price' in request.data or 'price_fcfa' in request.data:
+        plan.price = Decimal(str(request.data.get('price_fcfa', request.data.get('price'))))
         fields.append('price')
     if 'duration_hours' in request.data:
         plan.duration_hours = int(request.data['duration_hours'])
+        fields.append('duration_hours')
+    elif 'duration_days' in request.data:
+        plan.duration_hours = int(request.data['duration_days']) * 24
         fields.append('duration_hours')
     if 'visibility_multiplier' in request.data:
         plan.visibility_multiplier = Decimal(str(request.data['visibility_multiplier']))
@@ -971,7 +1130,7 @@ def boost_plan_update(request, plan_id):
         target_type='BoostPlan', target_id=plan_id,
         detail=plan.name,
     )
-    return Response({'status': 'ok', 'id': plan.id})
+    return Response({'status': 'ok', 'id': plan.id, 'plan': _serialize_boost_plan(plan)})
 
 
 @api_view(['POST'])
@@ -995,56 +1154,388 @@ def boost_cancel(request, boost_id):
     return Response({'status': 'ok', 'boost_id': boost.id})
 
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 @authentication_classes(_STAFF_AUTH)
 @permission_classes([IsAdminUser])
-def platform_wallet_summary(request):
-    """Trésorerie plateforme : revenus, boosts, commissions, historique."""
+def boost_promotions_list_create(request):
+    """Liste et création des promotions boost par plan."""
+    from apps.boosts.models import BoostPromotion, BoostPlan
+
+    if request.method == 'GET':
+        now = timezone.now()
+        promos = BoostPromotion.objects.select_related('boost_plan').order_by('-start_date')[:50]
+        results = []
+        for promo in promos:
+            results.append({
+                'id': promo.id,
+                'boost_plan_id': promo.boost_plan_id,
+                'boost_plan_name': promo.boost_plan.name,
+                'original_price': float(promo.boost_plan.price),
+                'discount_percentage': promo.discount_percentage,
+                'discounted_price': float(promo.get_discounted_price()),
+                'start_date': promo.start_date.date().isoformat(),
+                'end_date': promo.end_date.date().isoformat(),
+                'is_active': promo.is_active,
+                'is_currently_active': promo.is_currently_active,
+            })
+        return Response({'results': results, 'count': len(results)})
+
+    plan_id = request.data.get('boost_plan_id')
+    discount = request.data.get('discount_percentage')
+    start_date = request.data.get('start_date')
+    end_date = request.data.get('end_date')
+
+    if not all([plan_id, discount, start_date, end_date]):
+        return _err('Champs requis : boost_plan_id, discount_percentage, start_date, end_date.', status.HTTP_400_BAD_REQUEST)
+
+    try:
+        plan = BoostPlan.objects.get(pk=int(plan_id), is_active=True)
+    except (BoostPlan.DoesNotExist, ValueError):
+        return _err('Plan de boost introuvable.', status.HTTP_404_NOT_FOUND)
+
+    try:
+        discount_int = int(discount)
+        if not (1 <= discount_int <= 99):
+            raise ValueError
+    except ValueError:
+        return _err('discount_percentage doit être entre 1 et 99.', status.HTTP_400_BAD_REQUEST)
+
+    from django.utils.dateparse import parse_date
+    from datetime import datetime, time
+    from django.utils.timezone import make_aware
+
+    start = parse_date(str(start_date))
+    end = parse_date(str(end_date))
+    if not start or not end:
+        return _err('Dates invalides (format attendu: YYYY-MM-DD).', status.HTTP_400_BAD_REQUEST)
+    if end <= start:
+        return _err('La date de fin doit être après la date de début.', status.HTTP_400_BAD_REQUEST)
+
+    existing = BoostPromotion.objects.filter(
+        boost_plan=plan,
+        is_active=True,
+        end_date__gte=timezone.now(),
+    ).first()
+    if existing:
+        return _err(
+            f'Le plan "{plan.name}" a déjà une promo active (valide jusqu\'au {existing.end_date.date()}). '
+            f'Supprimez-la ou attendez son expiration avant d\'en créer une nouvelle.',
+            status.HTTP_409_CONFLICT,
+        )
+
+    promo = BoostPromotion.objects.create(
+        boost_plan=plan,
+        discount_percentage=discount_int,
+        start_date=make_aware(datetime.combine(start, time.min)),
+        end_date=make_aware(datetime.combine(end, time.max)),
+        is_active=True,
+    )
+
+    log_admin_action(
+        request.user, 'BOOST_PROMO_CREATE',
+        target_type='BoostPromotion', target_id=promo.id,
+        detail=f'{plan.name} -{discount_int}% du {start} au {end}',
+    )
+    return Response({
+        'status': 'ok',
+        'id': promo.id,
+        'boost_plan_name': plan.name,
+        'discount_percentage': discount_int,
+        'discounted_price': float(promo.get_discounted_price()),
+        'start_date': start.isoformat(),
+        'end_date': end.isoformat(),
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH', 'DELETE'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def boost_promotion_update(request, promo_id):
+    """Activer/désactiver ou supprimer une promotion boost."""
+    from apps.boosts.models import BoostPromotion
+
+    promo = get_object_or_404(BoostPromotion, pk=promo_id)
+
+    if request.method == 'DELETE':
+        promo.delete()
+        log_admin_action(
+            request.user, 'BOOST_PROMO_DELETE',
+            target_type='BoostPromotion', target_id=promo_id,
+        )
+        return Response({'status': 'ok'})
+
+    is_active = request.data.get('is_active')
+    if is_active is not None:
+        promo.is_active = bool(is_active)
+        promo.save(update_fields=['is_active', 'updated_at'])
+
+    return Response({'status': 'ok', 'id': promo.id, 'is_active': promo.is_active})
+
+
+@api_view(['GET', 'POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def concierge_notes(request):
+    """Notes internes conciergerie — mémos équipe support."""
+    from apps.core.models import StaffConciergeNote
+
+    if request.method == 'GET':
+        limit = min(int(request.query_params.get('limit', 20)), 100)
+        notes = StaffConciergeNote.objects.select_related('author').order_by('-updated_at')[:limit]
+        latest = notes[0] if notes else None
+        return Response({
+            'latest': {
+                'id': latest.id,
+                'content': latest.content,
+                'author': latest.author.username if latest and latest.author_id else None,
+                'updated_at': latest.updated_at.isoformat() if latest else None,
+            } if latest else None,
+            'results': [
+                {
+                    'id': n.id,
+                    'content': n.content,
+                    'author': n.author.username if n.author_id else 'system',
+                    'updated_at': n.updated_at.isoformat(),
+                }
+                for n in notes
+            ],
+        })
+
+    content = (request.data.get('content') or '').strip()
+    if not content:
+        return _err('content requis.')
+
+    notification_id = request.data.get('admin_notification_id')
+    notification = None
+    if notification_id:
+        notification = get_object_or_404(AdminNotification, pk=notification_id)
+
+    note = StaffConciergeNote.objects.create(
+        author=request.user,
+        content=content,
+        admin_notification=notification,
+    )
+    log_admin_action(
+        request.user, 'CONCIERGE_NOTE_SAVE',
+        target_type='StaffConciergeNote', target_id=note.id,
+        detail=content[:80],
+    )
+    return Response({
+        'id': note.id,
+        'content': note.content,
+        'updated_at': note.updated_at.isoformat(),
+    }, status=status.HTTP_201_CREATED)
+
+
+def _wallet_period_filter(period: str):
+    """Retourne la date de début pour filtrer selon la période demandée."""
+    from datetime import timedelta
+    now = timezone.now()
+    if period == 'today':
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == 'week':
+        return now - timedelta(days=7)
+    if period == 'month':
+        return now - timedelta(days=30)
+    if period == 'year':
+        return now - timedelta(days=365)
+    return None  # 'all'
+
+
+def _build_wallet_history(period: str):
+    """Construit la liste des entrées de trésorerie filtrées par période."""
+    from apps.wallets.models import Transaction, PayoutRequest
+    from apps.core.choices import PayoutRequestStatus
+
+    since = _wallet_period_filter(period)
+    history = []
+
+    tx_qs = Transaction.objects.filter(
+        transaction_type__in=['BOOST_PAYMENT', 'MISSION_PAYMENT', 'PAYOUT', 'COMMISSION'],
+    ).select_related('wallet__user').only(
+        'id', 'transaction_type', 'amount', 'description', 'created_at',
+        'wallet__user__referral_code', 'wallet__user__username',
+        'wallet__user__first_name', 'wallet__user__last_name',
+    )
+    if since:
+        tx_qs = tx_qs.filter(created_at__gte=since)
+    for t in tx_qs.order_by('-created_at')[:60]:
+        u = t.wallet.user if t.wallet else None
+        history.append({
+            'id': str(t.id),
+            'type': t.transaction_type,
+            'amount': float(t.amount),
+            'user_code': (u.referral_code or u.username or str(u.id)) if u else '—',
+            'user_name': (u.get_full_name() or u.username) if u else '—',
+            'description': t.description[:100] if t.description else '',
+            'created_at': t.created_at.strftime('%d/%m/%Y %H:%M'),
+            'created_at_iso': t.created_at.isoformat(),
+        })
+
+    try:
+        pr_qs = PayoutRequest.objects.filter(
+            status=PayoutRequestStatus.APPROVED,
+        ).select_related('wallet__user').only(
+            'id', 'amount', 'phone_number', 'created_at',
+            'wallet__user__referral_code', 'wallet__user__username',
+            'wallet__user__first_name', 'wallet__user__last_name',
+        )
+        if since:
+            pr_qs = pr_qs.filter(created_at__gte=since)
+        for pr in pr_qs.order_by('-created_at')[:30]:
+            u = pr.wallet.user if pr.wallet else None
+            history.append({
+                'id': str(pr.id),
+                'type': 'RETRAIT_APPROUVÉ',
+                'amount': float(pr.amount),
+                'user_code': (u.referral_code or u.username or str(u.id)) if u else (pr.phone_number or '—'),
+                'user_name': (u.get_full_name() or u.username) if u else '—',
+                'description': f'Retrait · {pr.phone_number or "—"}',
+                'created_at': pr.created_at.strftime('%d/%m/%Y %H:%M'),
+                'created_at_iso': pr.created_at.isoformat(),
+            })
+    except Exception:
+        pass
+
+    history.sort(key=lambda x: x['created_at_iso'], reverse=True)
+    return history[:80]
+
+
+def _wallet_summary_compute(period: str) -> dict:
+    """Calcul brut du wallet summary (sans cache)."""
     from apps.boosts.models import AgentBoost
     from apps.escrow.models import Escrow, EscrowSplitRecord
-    from apps.wallets.models import Transaction
 
-    platform_revenue = EscrowSplitRecord.objects.filter(
+    since = _wallet_period_filter(period)
+
+    split_qs = EscrowSplitRecord.objects.filter(
         beneficiary_type=EscrowSplitRecord.BeneficiaryType.PLATFORM,
-    ).aggregate(total=Sum('amount_fcfa'))['total'] or Decimal('0')
+    )
+    boost_qs = AgentBoost.objects.all()
+    if since:
+        split_qs = split_qs.filter(created_at__gte=since)
+        boost_qs = boost_qs.filter(created_at__gte=since)
 
-    boost_revenue = AgentBoost.objects.aggregate(
-        total=Sum('purchase_amount'),
-    )['total'] or Decimal('0')
+    platform_revenue = split_qs.aggregate(total=Sum('amount_fcfa'))['total'] or Decimal('0')
+    boost_revenue = boost_qs.aggregate(total=Sum('purchase_amount'))['total'] or Decimal('0')
 
     escrow_held = Escrow.objects.filter(
         status__in=['HELD', 'DISPUTED'],
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
-    influencer_pending = Decimal('0')
+    influencer_commissions = Decimal('0')
     try:
-        from apps.accounts.models import Influencer
-        influencer_pending = Influencer.objects.aggregate(
-            t=Sum('earnings_balance'),
-        )['t'] or Decimal('0')
+        inf_qs = EscrowSplitRecord.objects.filter(beneficiary_type='INFLUENCER')
+        if since:
+            inf_qs = inf_qs.filter(created_at__gte=since)
+        influencer_commissions = inf_qs.aggregate(t=Sum('amount_fcfa'))['t'] or Decimal('0')
     except Exception:
         pass
 
-    history = []
-    for t in Transaction.objects.filter(
-        transaction_type__in=['BOOST_PAYMENT', 'MISSION_PAYMENT'],
-    ).select_related('wallet__user').order_by('-created_at')[:30]:
-        history.append({
-            'id': str(t.id),
-            'type': t.transaction_type,
-            'amount': float(t.amount),
-            'description': t.description[:80] if t.description else '',
-            'created_at': t.created_at.strftime('%Y-%m-%d %H:%M'),
-        })
-
-    return Response({
+    return {
         'platform_revenue': float(platform_revenue),
         'boost_revenue': float(boost_revenue),
+        'total_platform': float(platform_revenue + boost_revenue),
         'escrow_held': float(escrow_held),
-        'influencer_pending': float(influencer_pending),
-        'available_estimate': float(platform_revenue + boost_revenue),
-        'history': history,
-    })
+        'influencer_commissions': float(influencer_commissions),
+    }
+
+
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def platform_wallet_summary(request):
+    """Trésorerie plateforme : revenus, boosts, commissions, historique."""
+    from django.core.cache import cache
+
+    period = request.query_params.get('period', 'all')
+    cache_key = f'wallet_summary_{period}'
+
+    cached = cache.get(cache_key)
+    if cached:
+        return Response(cached)
+
+    kpis = _wallet_summary_compute(period)
+    history = _build_wallet_history(period)
+
+    payload = {**kpis, 'history': history, 'period': period}
+    cache.set(cache_key, payload, timeout=30)  # 30 s — transparence temps réel
+
+    return Response(payload)
+
+
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def wallet_export(request):
+    """Export CSV ou PDF de l'historique trésorerie."""
+    import csv as csv_mod
+    from django.http import HttpResponse
+
+    fmt = request.query_params.get('format', 'csv')
+    period = request.query_params.get('period', 'all')
+    history = _build_wallet_history(period)
+
+    period_label = {'today': "Aujourd'hui", 'week': 'Semaine', 'month': 'Mois', 'year': 'Année'}.get(period, 'Tout')
+
+    if fmt == 'pdf':
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        import io
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+                                topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+        styles = getSampleStyleSheet()
+        elems = []
+        elems.append(Paragraph(f'Trésorerie FONAQO — {period_label}', styles['Title']))
+        elems.append(Paragraph(f'Exporté le {timezone.now().strftime("%d/%m/%Y %H:%M")}', styles['Normal']))
+        elems.append(Spacer(1, 0.5 * cm))
+
+        headers = ['Date', 'Type', 'Code utilisateur', 'Nom', 'Montant (FCFA)', 'Description']
+        rows = [headers]
+        for h in history:
+            rows.append([
+                h['created_at'],
+                h['type'],
+                h['user_code'],
+                h['user_name'],
+                f"{h['amount']:,.0f}",
+                h['description'][:60],
+            ])
+
+        col_widths = [3.5 * cm, 4 * cm, 3.5 * cm, 4 * cm, 3.5 * cm, 8 * cm]
+        t = Table(rows, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FFD100')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9F9F9')]),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#DDDDDD')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elems.append(t)
+        doc.build(elems)
+
+        buf.seek(0)
+        resp = HttpResponse(buf, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="tresorerie_fonaqo_{period}.pdf"'
+        return resp
+
+    # CSV (défaut — ouvrable dans Excel)
+    response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+    response['Content-Disposition'] = f'attachment; filename="tresorerie_fonaqo_{period}.csv"'
+    writer = csv_mod.writer(response)
+    writer.writerow(['Date', 'Type', 'Code utilisateur', 'Nom', 'Montant (FCFA)', 'Description'])
+    for h in history:
+        writer.writerow([h['created_at'], h['type'], h['user_code'], h['user_name'], h['amount'], h['description']])
+    return response
 
 
 @api_view(['POST'])
@@ -1192,6 +1683,55 @@ def badge_approve(request, profile_id):
     return Response({'status': 'ok', 'agent_code': profile.agent_code})
 
 
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def badge_download(request, profile_id):
+    """Génère et télécharge le PDF badge professionnel (admin)."""
+    from django.http import HttpResponse
+
+    from apps.accounts.agent_codes import ensure_agent_code
+    from apps.accounts.models import AgentProfile
+    from apps.accounts.pro_badge import build_agent_pro_badge_pdf
+    from apps.core.choices import AgentBadgeStatus
+    from apps.core.email_service import send_badge_approved_email
+
+    profile = get_object_or_404(
+        AgentProfile.objects.select_related('user'),
+        pk=profile_id,
+        user__is_agent=True,
+    )
+    if not profile.badge_photo and not profile.selfie_photo:
+        return _err(
+            'Aucune photo badge ou selfie KYC — impossible de générer le badge.',
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    was_pending = profile.badge_status != AgentBadgeStatus.APPROVED
+    if was_pending:
+        ensure_agent_code(profile)
+        profile.badge_status = AgentBadgeStatus.APPROVED
+        profile.badge_approved_at = timezone.now()
+        profile.badge_rejection_reason = ''
+        profile.save(update_fields=[
+            'badge_status', 'badge_approved_at', 'badge_rejection_reason', 'updated_at',
+        ])
+        send_badge_approved_email(profile.user, profile.agent_code)
+        log_admin_action(
+            request.user, 'BADGE_GENERATE',
+            target_type='AgentProfile', target_id=profile_id,
+            detail=f'@{profile.user.username}',
+        )
+    else:
+        ensure_agent_code(profile)
+
+    pdf_bytes = build_agent_pro_badge_pdf(profile.user, profile)
+    code = profile.agent_code or profile.user.username
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="badge-{code}.pdf"'
+    return response
+
+
 @api_view(['POST'])
 @authentication_classes(_STAFF_AUTH)
 @permission_classes([IsAdminUser])
@@ -1264,6 +1804,32 @@ def staff_users(request):
         detail=f'Staff @{user.username} role={role}',
     )
     return Response({'status': 'ok', 'id': str(user.id)}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['DELETE'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def staff_user_delete(request, user_id):
+    """Supprimer un compte staff (gestionnaire uniquement — pas les Super Admin)."""
+    if not request.user.is_superuser:
+        return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+
+    target = get_object_or_404(User, pk=user_id)
+    if not (target.is_staff or target.is_superuser):
+        return _err('Cet utilisateur n\'est pas un compte staff.', status.HTTP_400_BAD_REQUEST)
+    if target.is_superuser:
+        return _err('Impossible de supprimer un Super Admin.', status.HTTP_403_FORBIDDEN)
+    if target.id == request.user.id:
+        return _err('Vous ne pouvez pas supprimer votre propre compte.', status.HTTP_400_BAD_REQUEST)
+
+    username = target.username
+    target.delete()
+    log_admin_action(
+        request.user, 'STAFF_DELETE',
+        target_type='User',
+        detail=f'Compte staff @{username} supprimé',
+    )
+    return Response({'status': 'ok', 'deleted': username})
 
 
 @api_view(['GET', 'PATCH'])
@@ -1457,4 +2023,202 @@ def password_reset_process(request, request_id):
         'temp_password': temp_password,
         'sms_message': sms_message,
     })
+
+
+# ─── TEAM MANAGERS ────────────────────────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def managers_list_create(request):
+    """Liste des managers de brigade / Créer un nouveau manager."""
+    from apps.accounts.models import TeamManager, AgentProfile
+    from apps.missions.models import Mission
+
+    if request.method == 'GET':
+        qs = TeamManager.objects.annotate(
+            agents_total=Count('agents', distinct=True),
+            completed_missions=Count(
+                'agents__user__missions_assigned',
+                filter=Q(agents__user__missions_assigned__status='COMPLETED'),
+                distinct=True,
+            ),
+        ).order_by('-created_at')
+
+        data = []
+        for m in qs:
+            data.append({
+                'id': m.id,
+                'name': m.name,
+                'commission_rate': float(m.commission_rate),
+                'max_agents': m.max_agents,
+                'agent_count': m.agents_total,
+                'completed_missions': m.completed_missions,
+                'earnings_balance': float(m.earnings_balance),
+                'bio': m.bio,
+                'created_at': m.created_at.strftime('%d/%m/%Y'),
+            })
+        return Response({'results': data, 'count': len(data)})
+
+    # POST — créer
+    if not request.user.is_superuser:
+        return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+    name = (request.data.get('name') or '').strip()
+    if not name:
+        return _err('Le nom est obligatoire.', status.HTTP_400_BAD_REQUEST)
+    rate = request.data.get('commission_rate', '0.02')
+    max_agents = request.data.get('max_agents', 10)
+    bio = (request.data.get('bio') or '').strip()
+    try:
+        rate = Decimal(str(rate))
+        if not (Decimal('0') <= rate <= Decimal('0.5')):
+            raise ValueError
+    except Exception:
+        return _err('Taux invalide (0.00 – 0.50).', status.HTTP_400_BAD_REQUEST)
+
+    mgr = TeamManager.objects.create(
+        name=name, commission_rate=rate, max_agents=int(max_agents), bio=bio,
+    )
+    log_admin_action(request.user, 'MANAGER_CREATE', target_type='TeamManager', target_id=mgr.id,
+                     detail=f'Manager {name}')
+    return Response({'id': mgr.id, 'name': mgr.name}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def manager_detail(request, manager_id):
+    """Détail d'un manager, mise à jour, ou suppression."""
+    from apps.accounts.models import TeamManager, AgentProfile
+    from apps.missions.models import Mission
+
+    mgr = get_object_or_404(TeamManager, pk=manager_id)
+
+    if request.method == 'GET':
+        agents = AgentProfile.objects.filter(manager=mgr).select_related('user').annotate(
+            completed=Count(
+                'user__missions_assigned',
+                filter=Q(user__missions_assigned__status='COMPLETED'),
+            ),
+            disputed=Count(
+                'user__missions_assigned',
+                filter=Q(user__missions_assigned__status='DISPUTED'),
+            ),
+        )
+        agents_data = [{
+            'id': str(ap.user.id),
+            'username': ap.user.username or '',
+            'name': ap.user.get_full_name() or ap.user.username or '',
+            'agent_code': ap.agent_code or '',
+            'kyc_status': ap.kyc_status,
+            'average_rating': float(ap.average_rating),
+            'completed_missions': ap.completed,
+            'disputed_missions': ap.disputed,
+        } for ap in agents]
+
+        return Response({
+            'id': mgr.id,
+            'name': mgr.name,
+            'commission_rate': float(mgr.commission_rate),
+            'max_agents': mgr.max_agents,
+            'earnings_balance': float(mgr.earnings_balance),
+            'bio': mgr.bio,
+            'agent_count': len(agents_data),
+            'agents': agents_data,
+            'created_at': mgr.created_at.strftime('%d/%m/%Y'),
+        })
+
+    if request.method == 'PATCH':
+        if not request.user.is_superuser:
+            return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+        for field in ('name', 'bio', 'max_agents'):
+            val = request.data.get(field)
+            if val is not None:
+                setattr(mgr, field, val)
+        if 'commission_rate' in request.data:
+            try:
+                mgr.commission_rate = Decimal(str(request.data['commission_rate']))
+            except Exception:
+                return _err('Taux invalide.', status.HTTP_400_BAD_REQUEST)
+        mgr.save()
+        log_admin_action(request.user, 'MANAGER_UPDATE', target_type='TeamManager', target_id=mgr.id,
+                         detail=f'Manager {mgr.name}')
+        return Response({'status': 'ok'})
+
+    # DELETE
+    if not request.user.is_superuser:
+        return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+    name = mgr.name
+    mgr.delete()
+    log_admin_action(request.user, 'MANAGER_DELETE', target_type='TeamManager',
+                     detail=f'Manager {name} supprimé')
+    return Response({'status': 'ok'})
+
+
+@api_view(['GET'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def agents_free(request):
+    """Liste des agents sans manager (libres), filtrables par nom/username."""
+    from apps.accounts.models import AgentProfile
+    q = (request.query_params.get('q') or '').strip()
+    qs = AgentProfile.objects.filter(manager__isnull=True).select_related('user')
+    if q:
+        qs = qs.filter(
+            Q(user__username__icontains=q)
+            | Q(user__first_name__icontains=q)
+            | Q(user__last_name__icontains=q)
+            | Q(agent_code__icontains=q)
+        )
+    data = [{
+        'id': str(ap.user.id),
+        'profile_id': ap.id,
+        'username': ap.user.username or '',
+        'name': ap.user.get_full_name() or ap.user.username or '',
+        'agent_code': ap.agent_code or '',
+        'kyc_status': ap.kyc_status,
+        'average_rating': float(ap.average_rating),
+    } for ap in qs[:30]]
+    return Response({'results': data})
+
+
+@api_view(['POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def manager_assign_agent(request, manager_id):
+    """Assigner un agent libre à une brigade."""
+    from apps.accounts.models import TeamManager, AgentProfile
+    if not request.user.is_superuser:
+        return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+    mgr = get_object_or_404(TeamManager, pk=manager_id)
+    profile_id = request.data.get('profile_id')
+    if not profile_id:
+        return _err('profile_id obligatoire.', status.HTTP_400_BAD_REQUEST)
+    ap = get_object_or_404(AgentProfile, pk=profile_id)
+    if ap.manager_id is not None:
+        return _err('Cet agent est déjà dans une brigade.', status.HTTP_409_CONFLICT)
+    if mgr.agent_count >= mgr.max_agents:
+        return _err(f'Brigade pleine ({mgr.max_agents} agents max).', status.HTTP_409_CONFLICT)
+    ap.manager = mgr
+    ap.save(update_fields=['manager', 'updated_at'])
+    log_admin_action(request.user, 'MANAGER_ASSIGN', target_type='AgentProfile', target_id=ap.id,
+                     detail=f'@{ap.user.username} → Brigade {mgr.name}')
+    return Response({'status': 'ok', 'agent': ap.user.username, 'manager': mgr.name})
+
+
+@api_view(['POST'])
+@authentication_classes(_STAFF_AUTH)
+@permission_classes([IsAdminUser])
+def manager_unassign_agent(request, manager_id):
+    """Retirer un agent d'une brigade (le rendre libre)."""
+    from apps.accounts.models import AgentProfile
+    if not request.user.is_superuser:
+        return _err('Réservé au Super Admin.', status.HTTP_403_FORBIDDEN)
+    profile_id = request.data.get('profile_id')
+    ap = get_object_or_404(AgentProfile, pk=profile_id, manager_id=manager_id)
+    ap.manager = None
+    ap.save(update_fields=['manager', 'updated_at'])
+    log_admin_action(request.user, 'MANAGER_UNASSIGN', target_type='AgentProfile', target_id=ap.id,
+                     detail=f'@{ap.user.username} retiré de la brigade #{manager_id}')
+    return Response({'status': 'ok'})
 

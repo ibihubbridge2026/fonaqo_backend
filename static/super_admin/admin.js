@@ -98,6 +98,11 @@
     kycOverlay?.classList.add('hidden');
   }
 
+  function setKycDrawerActionsVisible(visible) {
+    const actions = qs('#kyc-drawer-actions', kycDrawer);
+    if (actions) actions.classList.toggle('hidden', !visible);
+  }
+
   qsa('[data-kyc-open]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-kyc-open');
@@ -108,11 +113,8 @@
       qs('#kyc-id-preview', kycDrawer).src = row.dataset.idCard || '';
       qs('#kyc-selfie-preview', kycDrawer).src = row.dataset.selfie || '';
       qs('#kyc-profile-id', kycDrawer).value = id;
-      const kycStatus = row.dataset.kyc || '';
-      const actions = qs('#kyc-drawer-actions', kycDrawer);
-      if (actions) {
-        actions.classList.toggle('hidden', kycStatus === 'APPROVED');
-      }
+      const kycStatus = (row.dataset.kyc || '').toUpperCase();
+      setKycDrawerActionsVisible(kycStatus !== 'APPROVED' && kycStatus !== 'REJECTED');
       kycDrawer.classList.remove('translate-x-full');
       kycDrawer.classList.add('open');
       kycOverlay?.classList.remove('hidden');
@@ -144,13 +146,15 @@
         if (res.ok) {
           const row = qs(`[data-agent-row="${profileId}"]`);
           if (row) {
+            const newStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
+            row.dataset.kyc = newStatus;
             const badge = qs('[data-kyc-badge]', row);
             if (badge) {
               badge.textContent = action === 'approve' ? 'Approuvé' : 'Rejeté';
               badge.className =
                 action === 'approve'
-                  ? 'px-2 py-1 rounded-full bg-green-50 text-green-700 text-label-sm border border-green-200'
-                  : 'px-2 py-1 rounded-full bg-red-50 text-red-700 text-label-sm border border-red-200';
+                  ? 'fq-badge fq-badge-completed'
+                  : 'fq-badge fq-badge-cancelled';
             }
           }
           closeKycDrawer();
@@ -215,6 +219,24 @@
     } catch (_) {}
   });
   document.addEventListener('click', () => notifPanel?.classList.add('hidden'));
+
+  /** Remplace la virgule par un point pour les champs décimaux (Django). */
+  function bindDecimalCommaToDot(...selectors) {
+    selectors.forEach((sel) => {
+      qsa(sel).forEach((input) => {
+        input.addEventListener('input', () => {
+          if (input.value.includes(',')) {
+            input.value = input.value.replace(/,/g, '.');
+          }
+        });
+      });
+    });
+  }
+  bindDecimalCommaToDot(
+    '#boost-create-visibility',
+    '#boost-plan-visibility',
+    '#influencer-rate',
+  );
 
   function getCsrf() {
     const m = document.cookie.match(/csrftoken=([^;]+)/);
@@ -373,9 +395,10 @@
     return `<span class="fq-badge ${cls}">${label || status}</span>`;
   }
 
-  /* Actions data-admin-action */
-  qsa('[data-admin-action]').forEach((el) => {
-    el.addEventListener('click', () => handleAdminAction(el));
+  /* Actions data-admin-action — délégation sur document pour couvrir les éléments dynamiques */
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-admin-action]');
+    if (el) handleAdminAction(el);
   });
 
   async function handleAdminAction(el) {
@@ -404,6 +427,7 @@
         body: JSON.stringify({ resolution_type: resolution, notes: '' }),
       });
       showToast(ok ? 'Litige résolu' : 'API litige non disponible — sprint backend', !ok);
+      if (ok) window.FonacoAdmin?.loadEscrowDisputes();
       return;
     }
     if (action === 'view-row-detail') {
@@ -443,6 +467,33 @@
         showToast(ok ? 'Badge validé — email envoyé' : 'Erreur validation', !ok);
         if (ok) setTimeout(() => location.reload(), 600);
       });
+      return;
+    }
+    if (action === 'generate-badge') {
+      const pid = el.getAttribute('data-profile-id');
+      const url = `/api/v1/staff/badges/${pid}/download/`;
+      try {
+        const res = await fetch(url, { credentials: 'same-origin', headers: { 'X-CSRFToken': getCsrf() } });
+        if (!res.ok) {
+          let msg = 'Erreur génération badge';
+          try {
+            const err = await res.json();
+            msg = err.message || err.error || msg;
+          } catch (_) {}
+          showToast(msg, true);
+          return;
+        }
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `badge-agent-${pid}.pdf`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Badge PDF généré');
+        setTimeout(() => location.reload(), 800);
+      } catch (e) {
+        showToast('Erreur téléchargement badge', true);
+      }
       return;
     }
 
@@ -593,21 +644,83 @@
     }
     if (action === 'edit-boost-plan') {
       qs('#boost-plan-id').value = el.getAttribute('data-plan-id');
+      qs('#boost-plan-name').value = el.getAttribute('data-plan-name') || '';
       qs('#boost-plan-price').value = el.getAttribute('data-plan-price');
+      qs('#boost-plan-days').value = el.getAttribute('data-plan-days') || Math.max(1, Math.round(Number(el.getAttribute('data-plan-hours') || 24) / 24));
       qs('#boost-plan-hours').value = el.getAttribute('data-plan-hours');
+      qs('#boost-plan-desc').value = el.getAttribute('data-plan-desc') || '';
+      qs('#boost-plan-visibility').value = el.getAttribute('data-plan-visibility') || '1.5';
       openModal('modal-boost-plan');
       return;
     }
     if (action === 'save-ops-note') {
       const note = qs('#ops-notes')?.value || '';
-      localStorage.setItem('fonaco_ops_note', note);
-      showToast('Note enregistrée localement (API notes équipe à venir)', false);
+      staffFetch('/api/v1/staff/concierge-notes/', {
+        method: 'POST',
+        body: JSON.stringify({ content: note }),
+      }).then(({ ok }) => {
+        showToast(ok ? 'Note conciergerie enregistrée' : 'Erreur enregistrement note', !ok);
+      });
       return;
     }
     if (action === 'refresh-payouts') window.FonacoAdmin?.loadPayouts();
     if (action === 'refresh-audit') window.FonacoAdmin?.loadAuditLog();
     if (action === 'refresh-boosts') location.reload();
     if (action === 'refresh-escrow') window.FonacoAdmin?.loadEscrowDisputes();
+    if (action === 'delete-promo') {
+      const promoId = el.getAttribute('data-promo-id');
+      if (!promoId) return;
+      showConfirm('Supprimer cette promotion ?', async () => {
+        const { ok } = await staffFetch(`/api/v1/staff/boosts/promotions/${promoId}/`, { method: 'DELETE' });
+        showToast(ok ? 'Promotion supprimée' : 'Erreur suppression', !ok);
+        if (ok) await window.FonacoAdmin?.loadActivePromos();
+      });
+      return;
+    }
+    if (action === 'delete-staff-user') {
+      const userId = el.getAttribute('data-user-id');
+      const uname = el.getAttribute('data-username') || 'ce compte';
+      if (!userId) return;
+      showConfirm(`Supprimer définitivement ${uname} ? Cette action est irréversible.`, async () => {
+        const { ok, body } = await staffFetch(`/api/v1/staff/staff-users/${userId}/delete/`, { method: 'DELETE' });
+        const { error } = parseStaffResponse(body);
+        showToast(ok ? `Compte ${uname} supprimé` : (error || 'Erreur suppression'), !ok);
+        if (ok) el.closest('tr')?.remove();
+      });
+      return;
+    }
+    if (action === 'view-chat') {
+      const missionId = el.getAttribute('data-mission-id');
+      if (!missionId) { showToast('ID mission non disponible', true); return; }
+      qs('#chat-messages-body').innerHTML = '<p class="text-[var(--fq-muted)] text-center py-8">Chargement de la conversation...</p>';
+      openModal('modal-chat');
+      try {
+        const { ok, body } = await staffFetch(`/api/v1/chat/conversations/?mission=${missionId}`);
+        if (!ok || !body || !body.results || body.results.length === 0) {
+          qs('#chat-messages-body').innerHTML = '<p class="text-[var(--fq-muted)] text-center py-8">Aucune conversation trouvée</p>';
+          return;
+        }
+        const convId = body.results[0].id;
+        const { ok: okMsg, body: bodyMsg } = await staffFetch(`/api/v1/chat/messages/?conversation=${convId}`);
+        if (!okMsg || !bodyMsg || !bodyMsg.results) {
+          qs('#chat-messages-body').innerHTML = '<p class="text-[var(--fq-muted)] text-center py-8">Aucun message trouvé</p>';
+          return;
+        }
+        const messages = bodyMsg.results;
+        qs('#chat-messages-body').innerHTML = messages.map(msg => `
+          <div class="flex gap-3 ${msg.sender === body.results[0].client ? 'justify-start' : 'justify-end'}">
+            <div class="max-w-[80%] p-3 rounded-lg ${msg.sender === body.results[0].client ? 'bg-white' : 'bg-[var(--fq-yellow-soft)]'}">
+              <p class="font-medium text-xs text-[var(--fq-muted)] mb-1">${msg.sender_name || 'Utilisateur'}</p>
+              <p class="text-sm">${msg.content || '(Message vide)'}</p>
+              <p class="text-xs text-[var(--fq-muted)] mt-1">${new Date(msg.created_at).toLocaleString('fr-FR')}</p>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        qs('#chat-messages-body').innerHTML = '<p class="text-red-500 text-center py-8">Erreur lors du chargement de la conversation</p>';
+      }
+      return;
+    }
   }
 
   let confirmCallback = null;
@@ -702,19 +815,45 @@
   qs('#form-boost-plan')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const pid = qs('#boost-plan-id').value;
-    const { ok } = await staffFetch(`/api/v1/staff/boosts/plans/${pid}/`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        price: qs('#boost-plan-price').value,
-        duration_hours: qs('#boost-plan-hours').value,
-      }),
+    const days = qs('#boost-plan-days')?.value;
+    showConfirm('Êtes-vous sûr de vouloir modifier ce paramètre sensible ?', async () => {
+      const { ok } = await staffFetch(`/api/v1/staff/boosts/plans/${pid}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: qs('#boost-plan-name')?.value,
+          description: qs('#boost-plan-desc')?.value,
+          price_fcfa: qs('#boost-plan-price').value,
+          duration_days: days,
+          duration_hours: qs('#boost-plan-hours')?.value || (days ? Number(days) * 24 : undefined),
+          visibility_multiplier: qs('#boost-plan-visibility')?.value,
+        }),
+      });
+      closeModal('modal-boost-plan');
+      showToast(ok ? 'Forfait mis à jour' : 'Erreur', !ok);
+      if (ok) setTimeout(() => location.reload(), 800);
     });
-    closeModal('modal-boost-plan');
-    showToast(ok ? 'Forfait mis à jour' : 'Erreur', !ok);
-    if (ok) setTimeout(() => location.reload(), 800);
   });
 
-  ['modal-influencer', 'modal-artisan', 'modal-staff', 'modal-boost-plan', 'modal-assign', 'modal-arbitrage', 'modal-confirm', 'modal-withdrawal-request', 'modal-withdrawal-approve', 'modal-influencer-portal', 'modal-row-detail'].forEach((id) => {
+  qs('#form-boost-plan-create')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const days = qs('#boost-create-days').value;
+    showConfirm('Êtes-vous sûr de vouloir modifier ce paramètre sensible ?', async () => {
+      const { ok } = await staffFetch('/api/v1/staff/boosts/plans/', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: qs('#boost-create-name').value,
+          description: qs('#boost-create-desc').value,
+          price_fcfa: qs('#boost-create-price').value,
+          duration_days: days,
+          visibility_multiplier: qs('#boost-create-visibility').value || '1.5',
+        }),
+      });
+      showToast(ok ? 'Plan boost créé' : 'Erreur création plan', !ok);
+      if (ok) setTimeout(() => location.reload(), 800);
+    });
+  });
+
+  ['modal-influencer', 'modal-artisan', 'modal-staff', 'modal-boost-plan', 'modal-assign', 'modal-arbitrage', 'modal-confirm', 'modal-withdrawal-request', 'modal-withdrawal-approve', 'modal-influencer-portal', 'modal-row-detail', 'modal-chat'].forEach((id) => {
     qs(`#${id}-overlay`)?.addEventListener('click', () => closeModal(id));
   });
 
@@ -804,10 +943,9 @@
         const conf = data.fees_confidential ?? data.FEES_CONFIDENTIAL;
         if (urgent != null) qs('#fees-urgent').value = urgent;
         if (conf != null) qs('#fees-confidential').value = conf;
-        const split = data.revenue_split || {};
-        const agentPct = split.agent_pct ?? data.SPLIT_AGENT_PCT ?? 88;
-        const platformPct = split.platform_pct ?? data.SPLIT_PLATFORM_PCT ?? 10;
-        const influencerPct = split.influencer_pct ?? data.SPLIT_INFLUENCER_PCT ?? 2;
+        const agentPct = data.SPLIT_AGENT_PCT ?? 88;
+        const platformPct = data.SPLIT_PLATFORM_PCT ?? 10;
+        const influencerPct = data.SPLIT_INFLUENCER_PCT ?? 2;
         if (qs('#split-agent-pct')) qs('#split-agent-pct').value = agentPct;
         if (qs('#split-platform-pct')) qs('#split-platform-pct').value = platformPct;
         if (qs('#split-influencer-pct')) qs('#split-influencer-pct').value = influencerPct;
@@ -836,7 +974,8 @@
           list.innerHTML = '<p class="text-on-surface-variant text-sm">Configuration indisponible.</p>';
           return;
         }
-        const entries = Object.entries(data).filter(([k]) => k === k.toUpperCase() || k.startsWith('fees_'));
+        const SKIP_KEYS = new Set(['revenue_split', 'boost_plans']);
+        const entries = Object.entries(data).filter(([k, v]) => k === k.toUpperCase() && !SKIP_KEYS.has(k) && typeof v !== 'object');
         list.innerHTML = entries.map(([k, v]) => `
           <div class="flex justify-between items-center p-3 rounded-xl bg-surface-container-low border border-outline-variant/50 hover:border-fonaco/40 transition-colors">
             <code class="text-xs font-mono-data text-primary font-semibold">${k}</code>
@@ -847,17 +986,21 @@
       }
     },
     bindConfigForm() {
+      const SENSITIVE_CONFIRM =
+        'Êtes-vous sûr de vouloir modifier ce paramètre sensible ?';
       qs('#form-platform-fees')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const payload = {
           FEES_URGENT: qs('#fees-urgent').value,
           FEES_CONFIDENTIAL: qs('#fees-confidential').value,
         };
-        const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
+        showConfirm(SENSITIVE_CONFIRM, async () => {
+          const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          });
+          showToast(ok ? 'Frais enregistrés' : 'Erreur enregistrement', !ok);
         });
-        showToast(ok ? 'Frais enregistrés' : 'Erreur enregistrement', !ok);
       });
       qs('#form-revenue-split')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -871,7 +1014,7 @@
           return;
         }
         warn?.classList.add('hidden');
-        showConfirm('Modifier le split escrow ? Action sensible.', async () => {
+        showConfirm('Modifier le split escrow ? ' + SENSITIVE_CONFIRM, async () => {
           const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
             method: 'PATCH',
             body: JSON.stringify({
@@ -880,34 +1023,75 @@
               SPLIT_INFLUENCER_PCT: i,
             }),
           });
+          if (ok) { await window.FonacoAdmin?.loadPlatformFees(); await window.FonacoAdmin?.loadConfigKeys(); }
           showToast(ok ? 'Split escrow mis à jour' : 'Erreur', !ok);
         });
       });
       qs('#form-boost-promo')?.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const until = qs('#boost-promo-until').value;
-        const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
-          method: 'PATCH',
-          body: JSON.stringify({
-            BOOST_PROMO_PERCENT: qs('#boost-promo-percent').value || '0',
-            BOOST_PROMO_UNTIL: until ? `${until}T23:59:59` : '',
-          }),
+        const planId = qs('#boost-promo-plan-id')?.value;
+        const percent = qs('#boost-promo-percent')?.value;
+        const start = qs('#boost-promo-start')?.value;
+        const until = qs('#boost-promo-until')?.value;
+        if (!planId) { showToast('Sélectionnez un plan de boost', true); return; }
+        if (!percent || percent < 1 || percent > 99) { showToast('Réduction invalide (1-99%)', true); return; }
+        if (!start || !until) { showToast('Les dates début et fin sont requises', true); return; }
+        if (until <= start) { showToast('La date de fin doit être après le début', true); return; }
+        const { ok: promoOk, body: promoBody } = await staffFetch('/api/v1/staff/boosts/promotions/', {
+          method: 'POST',
+          body: JSON.stringify({ boost_plan_id: planId, discount_percentage: percent, start_date: start, end_date: until }),
         });
-        showToast(ok ? 'Promo boost enregistrée' : 'Erreur', !ok);
+        const { data: createdPromo, error: promoErr } = parseStaffResponse(promoBody);
+        if (promoOk) {
+          const planName = createdPromo?.boost_plan_name || qs(`#boost-promo-plan-id option[value="${planId}"]`)?.textContent?.split(' —')[0] || 'le plan sélectionné';
+          showToast(`Promo créée : -${percent}% sur ${planName}`);
+          await window.FonacoAdmin?.loadActivePromos();
+          qs('#form-boost-promo').reset();
+        } else {
+          showToast(promoErr || promoBody?.message || 'Erreur création promo', true);
+        }
       });
       qs('#form-agent-delay')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const delay = qs('#agent-mission-delay').value;
-        const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
-          method: 'PATCH',
-          body: JSON.stringify({ AGENT_MISSION_DELAY_MINUTES: delay }),
+        showConfirm(SENSITIVE_CONFIRM, async () => {
+          const { ok } = await staffFetch('/api/v1/staff/platform-config/', {
+            method: 'PATCH',
+            body: JSON.stringify({ AGENT_MISSION_DELAY_MINUTES: delay }),
+          });
+          if (ok) {
+            const delayEl = qs('#delay-value');
+            if (delayEl) delayEl.textContent = delay;
+          }
+          showToast(ok ? 'Délai missions enregistré' : 'Erreur enregistrement', !ok);
         });
-        if (ok) {
-          const delayEl = qs('#delay-value');
-          if (delayEl) delayEl.textContent = delay;
-        }
-        showToast(ok ? 'Délai missions enregistré' : 'Erreur enregistrement', !ok);
       });
+    },
+    async loadActivePromos() {
+      const list = qs('#active-promos-list');
+      if (!list) return;
+      try {
+        const { ok, body } = await staffFetch('/api/v1/staff/boosts/promotions/');
+        const { data: promoData } = parseStaffResponse(body);
+        const promoResults = promoData?.results || promoData;
+        if (!ok || !Array.isArray(promoResults) || !promoResults.length) {
+          list.innerHTML = '<p class="text-sm text-[var(--fq-muted)]">Aucune promotion créée.</p>';
+          return;
+        }
+        list.innerHTML = promoResults.map((promo) => `
+          <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--fq-bg)] border border-[var(--fq-border-light)] ${promo.is_currently_active ? 'border-[var(--fq-yellow)]' : ''}">
+            <div>
+              <p class="font-semibold text-sm">${promo.boost_plan_name} <span class="fq-badge fq-badge-default">-${promo.discount_percentage}%</span></p>
+              <p class="text-xs text-[var(--fq-muted)]">${promo.start_date} → ${promo.end_date} · ${promo.original_price} → <strong>${promo.discounted_price} FCFA</strong></p>
+            </div>
+            <div class="flex items-center gap-2">
+              ${promo.is_currently_active ? '<span class="fq-badge fq-badge-success text-xs">Actif</span>' : '<span class="fq-badge fq-badge-default text-xs">Inactif</span>'}
+              <button type="button" class="fq-btn fq-btn-ghost fq-btn-sm text-red-500" data-admin-action="delete-promo" data-promo-id="${promo.id}">Supprimer</button>
+            </div>
+          </div>`).join('');
+      } catch (_) {
+        list.innerHTML = '<p class="text-sm text-[var(--fq-muted)]">Erreur chargement promos.</p>';
+      }
     },
     async loadStaffProfile() {
       const form = qs('#form-staff-profile');
@@ -1085,10 +1269,20 @@
         });
       });
     },
-    async loadWallet() {
+    _walletPeriod: 'all',
+    async loadWallet(period) {
+      if (period !== undefined) this._walletPeriod = period;
+      const p = this._walletPeriod;
       const fmt = (n) => (n != null ? `${Number(n).toLocaleString('fr-FR')} FCFA` : '—');
+      const TYPE_BADGE = {
+        BOOST_PAYMENT: 'fq-badge-progress',
+        MISSION_PAYMENT: 'fq-badge-completed',
+        PAYOUT: 'fq-badge-cancelled',
+        COMMISSION: 'fq-badge-default',
+        'RETRAIT_APPROUVÉ': 'fq-badge-cancelled',
+      };
       try {
-        const { ok, body } = await staffFetch('/api/v1/staff/wallet/summary/');
+        const { ok, body } = await staffFetch(`/api/v1/staff/wallet/summary/?period=${p}`);
         const { data } = parseStaffResponse(body);
         if (!ok || !data) return;
         qsa('[data-wallet]').forEach((el) => {
@@ -1098,20 +1292,41 @@
         const tbody = qs('#wallet-history-body');
         if (!tbody) return;
         const rows = data.history || [];
+        const countEl = qs('#wallet-history-count');
+        if (countEl) countEl.textContent = rows.length ? `${rows.length} entrée${rows.length > 1 ? 's' : ''}` : '';
         if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-[var(--fq-muted)]">Aucune entrée.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-[var(--fq-muted)]">Aucune entrée pour cette période.</td></tr>';
           return;
         }
         tbody.innerHTML = rows.map((h) => `
           <tr>
             <td class="mono text-xs">${h.created_at}</td>
-            <td><span class="fq-badge fq-badge-default">${h.type}</span></td>
+            <td><span class="fq-badge ${TYPE_BADGE[h.type] || 'fq-badge-default'} text-xs">${h.type}</span></td>
+            <td class="mono text-xs font-semibold text-[var(--fq-primary)]">${h.user_code || '—'}</td>
+            <td class="text-sm">${h.user_name || '—'}</td>
             <td class="mono font-semibold">${Number(h.amount).toLocaleString('fr-FR')} FCFA</td>
-            <td class="text-sm text-[var(--fq-muted)]">${h.description || '—'}</td>
+            <td class="text-xs text-[var(--fq-muted)] max-w-xs truncate">${h.description || '—'}</td>
           </tr>`).join('');
       } catch (err) {
         console.error('[FonacoAdmin] loadWallet', err);
       }
+    },
+    bindWalletFilters() {
+      qsa('[data-wallet-period]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          qsa('[data-wallet-period]').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.loadWallet(btn.getAttribute('data-wallet-period'));
+        });
+      });
+      qs('#wallet-export-csv')?.addEventListener('click', () => {
+        const p = this._walletPeriod;
+        window.location.href = `/api/v1/staff/wallet/export/?format=csv&period=${p}`;
+      });
+      qs('#wallet-export-pdf')?.addEventListener('click', () => {
+        const p = this._walletPeriod;
+        window.location.href = `/api/v1/staff/wallet/export/?format=pdf&period=${p}`;
+      });
     },
     async loadDashboard() {
       await Promise.all([
@@ -1163,16 +1378,18 @@
     },
     renderActivityRows(rows, container) {
       if (!container) return;
+      const isDashboard = container.id === 'dashboard-activity';
+      const items = isDashboard ? rows.slice(0, 5) : rows;
       const severityDot = {
         critical: 'critical',
         warning: 'warning',
         info: 'info',
       };
-      if (!rows.length) {
+      if (!items.length) {
         container.innerHTML = '<p class="text-sm text-[var(--fq-muted)] italic py-4">Aucune activité récente.</p>';
         return;
       }
-      container.innerHTML = rows.map((item) => `
+      container.innerHTML = items.map((item) => `
         <div class="fq-timeline-item">
           <span class="fq-timeline-dot ${severityDot[item.severity] || 'info'}"></span>
           <div class="min-w-0 flex-1">
@@ -1185,7 +1402,7 @@
       const container = qs('#dashboard-activity');
       if (!container) return;
       try {
-        const { ok, status, body } = await staffFetch('/api/v1/staff/dashboard/activity/?limit=10');
+        const { ok, status, body } = await staffFetch('/api/v1/staff/dashboard/activity/?limit=5');
         const { data, error } = parseStaffResponse(body);
         const rows = data?.results || [];
         if (!ok) {
@@ -1255,7 +1472,8 @@
       tbody.innerHTML = rows.map((p) => `
         <tr>
           <td class="mono text-xs">${p.id}</td>
-          <td class="font-semibold">${p.agent_name || p.username}</td>
+          <td class="font-semibold">${p.agent_name || p.username}<br><span class="text-xs text-[var(--fq-muted)]">@${p.username || ''}</span></td>
+          <td class="text-sm">${p.manager_name ? `<span class="fq-badge fq-badge-default text-xs">${p.manager_name}</span>` : '<span class="text-xs text-[var(--fq-muted)]">Aucun manager</span>'}</td>
           <td class="text-right mono font-bold">${Number(p.amount).toLocaleString('fr-FR')} FCFA</td>
           <td><span class="fq-badge fq-badge-pending">${p.status || 'PENDING'}</span></td>
           <td class="text-right">
@@ -1267,9 +1485,79 @@
       const kpi = qs('[data-kpi="payouts_pending"]');
       if (kpi) kpi.textContent = String(rows.length);
     },
+    resetDisputePanel() {
+      qsa('[data-dispute-row]').forEach((r) => r.classList.remove('fq-row-selected'));
+      const activeId = qs('#active-dispute-id');
+      if (activeId) activeId.value = '';
+      const arbId = qs('#arbitrage-dispute-id');
+      if (arbId) arbId.value = '';
+      const subtitle = qs('#dispute-panel-subtitle');
+      if (subtitle) subtitle.textContent = 'Sélectionnez un litige dans le tableau';
+      const panel = qs('#dispute-evidence');
+      if (panel) {
+        panel.innerHTML = '<p class="text-[var(--fq-muted)] text-center py-8">Aucun litige sélectionné</p>';
+      }
+      qs('#dispute-panel')?.classList.remove('is-ready');
+      qsa('#dispute-panel [data-admin-action^="dispute"], #dispute-panel [data-admin-action="open-arbitrage"]').forEach((btn) => {
+        btn.disabled = true;
+      });
+    },
+    selectDisputeRow(row, data) {
+      qsa('[data-dispute-row]').forEach((r) => r.classList.remove('fq-row-selected'));
+      row.classList.add('fq-row-selected');
+      const disputeId = String(data.dispute_id);
+      qs('#active-dispute-id').value = disputeId;
+      qs('#arbitrage-dispute-id').value = disputeId;
+      qs('#dispute-panel-subtitle').textContent = `Litige #${disputeId} — Mission ${data.mission_ref}`;
+      const panel = qs('#dispute-evidence');
+      if (panel) {
+        panel.innerHTML = `
+          <div class="space-y-3">
+            <div class="p-3 rounded-xl bg-white border border-[var(--fq-border-light)]">
+              <p class="text-xs font-bold uppercase text-[var(--fq-muted)] mb-1">Client</p>
+              <p class="font-semibold">${data.client || '—'}</p>
+            </div>
+            <div class="p-3 rounded-xl bg-white border border-[var(--fq-border-light)]">
+              <p class="text-xs font-bold uppercase text-[var(--fq-muted)] mb-1">Agent</p>
+              <p class="font-semibold">${data.agent || 'Non assigné'}</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--fq-bg)]">
+              <p class="text-xs text-[var(--fq-muted)]">Montant escrow</p>
+              <p class="font-bold mono">${data.amount} FCFA</p>
+            </div>
+            <div>
+              <p class="text-xs font-bold uppercase text-[var(--fq-muted)] mb-1">Motif</p>
+              <p class="text-sm">${data.title || '—'}</p>
+              <p class="text-xs text-[var(--fq-muted)] mt-2">${data.description || ''}</p>
+            </div>
+          </div>`;
+      }
+      qs('#dispute-panel')?.classList.add('is-ready');
+      qsa('#dispute-panel [data-admin-action^="dispute"], #dispute-panel [data-admin-action="open-arbitrage"]').forEach((btn) => {
+        btn.disabled = false;
+      });
+    },
+    bindDisputeTable() {
+      const tbody = qs('#escrow-tbody');
+      if (!tbody || tbody.dataset.disputeBound) return;
+      tbody.dataset.disputeBound = '1';
+      tbody.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-dispute-row]');
+        if (!row) return;
+        try {
+          const raw = row.getAttribute('data-dispute-json') || '';
+          const data = JSON.parse(decodeURIComponent(raw));
+          this.selectDisputeRow(row, data);
+        } catch (err) {
+          console.error('dispute row parse', err);
+          showToast('Impossible de charger ce litige', true);
+        }
+      });
+    },
     async loadEscrowDisputes() {
       const tbody = qs('#escrow-tbody');
       if (!tbody) return;
+      this.resetDisputePanel();
       const { ok, body } = await staffFetch('/api/v1/staff/escrow/disputed/');
       if (!ok) {
         tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-sm text-on-surface-variant">Aucun litige ouvert.</td></tr>`;
@@ -1280,21 +1568,20 @@
       const parsed = parseStaffResponse(body);
       const rows = parsed.data?.results || [];
       tbody.innerHTML = rows.map((r) => `
-        <tr class="hover:bg-surface-container-low cursor-pointer border-l-4 ${r.status === 'DISPUTED' ? 'border-secondary bg-secondary-container/5' : 'border-transparent'}"
-          data-dispute-row="${r.dispute_id}" data-dispute-id="${r.dispute_id}">
+        <tr class="hover:bg-surface-container-low cursor-pointer border-l-4 border-transparent fq-dispute-row"
+          data-dispute-row="1" data-dispute-json="${encodeURIComponent(JSON.stringify(r))}">
           <td class="p-4 font-mono-data">#${r.mission_ref}</td>
           <td class="p-4">${r.client}</td>
           <td class="p-4">${r.agent || '—'}</td>
+          <td class="p-4 text-sm">${r.agent_manager ? `<span class="fq-badge fq-badge-default text-xs">${r.agent_manager}</span>` : '<span class="text-xs text-[var(--fq-muted)]">Aucun</span>'}</td>
           <td class="p-4 font-semibold">${r.amount} FCFA</td>
           <td class="p-4"><span class="px-2 py-1 rounded-full text-xs font-bold">${r.escrow_status}</span></td>
+          <td class="p-4 text-right">
+            <button type="button" data-admin-action="view-chat" data-mission-id="${r.mission_id}" class="fq-btn fq-btn-ghost fq-btn-sm text-xs">
+              {% include "super_admin/partials/icon.html" with name="chat" class="w-4 h-4" %} Voir la conversation
+            </button>
+          </td>
         </tr>`).join('');
-      qsa('[data-dispute-row]', tbody).forEach((row) => {
-        row.addEventListener('click', () => {
-          qs('#active-dispute-id').value = row.dataset.disputeId;
-          qs('#arbitrage-dispute-id').value = row.dataset.disputeId;
-          qs('#dispute-panel-subtitle').textContent = `Litige #${row.dataset.disputeId}`;
-        });
-      });
       const kpi = qs('[data-kpi="disputes_open"]');
       if (kpi) kpi.textContent = String(rows.length);
     },
@@ -1348,8 +1635,41 @@
     bindOpsNotes() {
       const note = qs('#ops-notes');
       if (!note) return;
-      const saved = localStorage.getItem('fonaco_ops_note');
-      if (saved) note.value = saved;
+      staffFetch('/api/v1/staff/concierge-notes/').then(({ ok, body }) => {
+        const parsed = parseStaffResponse(body);
+        const latest = parsed.data?.latest;
+        if (ok && latest?.content) note.value = latest.content;
+      });
+    },
+    _activityPage: 1,
+    async loadActivityPage(page = 1) {
+      const container = qs('#activity-feed-full');
+      if (!container) return;
+      const pageSize = 15;
+      const { ok, body } = await staffFetch(`/api/v1/staff/dashboard/activity/?limit=${pageSize}&page=${page}`);
+      const parsed = parseStaffResponse(body);
+      const rows = parsed.data?.results || [];
+      this.renderActivityRows(rows, container);
+      const total = parsed.data?.total ?? rows.length;
+      const info = qs('#activity-page-info');
+      if (info) info.textContent = `Page ${page} — ${rows.length} événement(s)`;
+      const prev = qs('#activity-prev-btn');
+      const next = qs('#activity-next-btn');
+      if (prev) prev.disabled = page <= 1;
+      if (next) next.disabled = !parsed.data?.has_more;
+      this._activityPage = page;
+    },
+    bindActivityPagination() {
+      qs('#activity-prev-btn')?.addEventListener('click', () => {
+        if (this._activityPage > 1) this.loadActivityPage(this._activityPage - 1);
+      });
+      qs('#activity-next-btn')?.addEventListener('click', () => {
+        this.loadActivityPage(this._activityPage + 1);
+      });
+      qs('#activity-refresh-btn')?.addEventListener('click', () => {
+        this.loadActivityPage(this._activityPage);
+        showToast('Activité actualisée', false);
+      });
     },
     bindInfluencerForm() {
       qs('#form-influencer-quick')?.addEventListener('submit', async (e) => {
@@ -1419,19 +1739,27 @@
         this.loadOpsActivity();
       }
       if (page === 'transactions' || qs('#escrow-tbody')) {
+        this.bindDisputeTable();
+        this.resetDisputePanel();
         this.loadEscrowDisputes();
         this.loadPayouts();
       }
       if (page === 'wallet' || qs('#wallet-kpis')) {
+        this.bindWalletFilters();
         this.loadWallet();
       }
       if (page === 'audit' || qs('#audit-log-body')) {
         this.loadAuditLog();
       }
+      if (page === 'activity' || qs('#activity-feed-full')) {
+        this.bindActivityPagination();
+        this.loadActivityPage(1);
+      }
       if (page === 'config' || qs('#form-platform-fees')) {
         this.loadPlatformFees();
         this.loadConfigKeys();
         this.bindConfigForm();
+        this.loadActivePromos();
       }
       if (page === 'profile' || qs('#form-staff-profile')) {
         this.loadStaffProfile();

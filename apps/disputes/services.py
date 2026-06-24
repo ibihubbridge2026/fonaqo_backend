@@ -25,7 +25,10 @@ def notify_dispute_resolution(dispute):
     data = {
         'type': 'DISPUTE_RESOLVED',
         'mission_id': str(mission.id),
+        'mission_status': mission.status,
         'dispute_id': str(dispute.id),
+        'action': 'mission',
+        'target_id': str(mission.id),
     }
 
     for user in participants:

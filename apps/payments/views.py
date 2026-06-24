@@ -6,9 +6,11 @@ from django.conf import settings
 from rest_framework import status
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import IsAgent
 from apps.core.choices import TransactionStatus
 
 from .models import Payment
@@ -20,11 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 class WithdrawalViewSet(viewsets.ViewSet):
-    """ViewSet pour les demandes de retrait"""
-    permission_classes = [IsAuthenticated]
+    """ViewSet pour les demandes de retrait — agents uniquement."""
+    permission_classes = [IsAuthenticated, IsAgent]
 
     def create(self, request):
         """Crée une demande de retrait"""
+        # AUDIT FIX [P0] — Bloquer les comptes clients (aligné sur wallets/withdraw/)
+        if request.user.is_client and not request.user.is_agent:
+            raise PermissionDenied(
+                'Les comptes clients ne sont pas autorisés à effectuer des retraits.',
+            )
+
         serializer = WithdrawalRequestSerializer(
             data=request.data,
             context={'request': request}
@@ -182,16 +190,37 @@ def feexpay_confirm_view(request):
 @permission_classes([AllowAny])
 def feexpay_webhook_view(request):
     """Webhook FeexPay — met à jour les balances instantanément en cas de succès."""
+    # AUDIT FIX [P0] — Vérification HMAC sur corps brut AVANT parsing JSON
+    payload_body = request.body
     secret = getattr(settings, 'FEEXPAY_WEBHOOK_SECRET', '')
+    is_live = not getattr(settings, 'FEEXPAY_SANDBOX', True)
+
     if secret:
-        incoming = request.headers.get('X-FeexPay-Signature', '')
-        if incoming != secret:
+        from .feexpay_service import FeexPayClient
+
+        incoming_signature = request.headers.get('X-FeexPay-Signature', '')
+        if not FeexPayClient.verify_webhook_signature(payload_body, incoming_signature):
+            logger.warning(
+                'Webhook FeexPay: signature invalide depuis %s',
+                request.META.get('REMOTE_ADDR'),
+            )
             return Response(
                 {'message': 'Signature invalide'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+    elif is_live:
+        logger.error('FEEXPAY_WEBHOOK_SECRET non configuré en mode LIVE!')
+        return Response(
+            {'message': 'Webhook non configuré'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
-    payload = request.data if isinstance(request.data, dict) else {}
+    import json
+    try:
+        payload = json.loads(payload_body) if payload_body else {}
+    except json.JSONDecodeError:
+        return Response({'message': 'JSON invalide'}, status=status.HTTP_400_BAD_REQUEST)
+
     payment = FeexPayService.handle_webhook(payload)
     if payment is None:
         return Response({'message': 'Ignoré'}, status=status.HTTP_200_OK)

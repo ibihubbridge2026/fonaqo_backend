@@ -94,6 +94,7 @@ class PlatformConfigService:
 
     @classmethod
     def set_value(cls, key: str, value: str, description: str = '') -> PlatformConfiguration:
+        from django.db import transaction
         obj, _ = PlatformConfiguration.objects.update_or_create(
             key=key,
             defaults={
@@ -101,5 +102,5 @@ class PlatformConfigService:
                 'description': description,
             },
         )
-        cls.invalidate(key)
+        transaction.on_commit(lambda: cls.invalidate(key))
         return obj

@@ -3,6 +3,12 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
+from apps.core.validators import (
+    validate_audio_upload,
+    validate_chat_attachment,
+    validate_chat_media,
+)
+
 
 class UserPresence(models.Model):
     """Présence en ligne d'un utilisateur (online / last_seen)."""
@@ -163,16 +169,18 @@ class Message(models.Model):
         blank=True,
     )
 
-    # Pour images/fichiers
-    media_file = models.ImageField(
+    # Pour images/fichiers — AUDIT FIX [P0] validation MIME/extension
+    media_file = models.FileField(
         upload_to='chat_media/%Y/%m/%d/',
-        null=True, blank=True
+        null=True, blank=True,
+        validators=[validate_chat_media],
     )
 
-    # Pour messages vocaux
+    # Pour messages vocaux — AUDIT FIX [P0]
     audio_file = models.FileField(
         upload_to='chat_voice/%Y/%m/%d/',
-        null=True, blank=True
+        null=True, blank=True,
+        validators=[validate_audio_upload],
     )
     audio_duration = models.IntegerField(
         help_text="Durée en secondes",
@@ -202,6 +210,15 @@ class Message(models.Model):
         indexes = [
             models.Index(fields=['conversation', '-created_at']),
             models.Index(fields=['sender', '-created_at']),
+            # AUDIT FIX [P1/P2] — indexes delivery et client_message_id
+            models.Index(
+                fields=['conversation', 'client_message_id'],
+                name='message_conv_client_id_idx',
+            ),
+            models.Index(
+                fields=['conversation', 'delivery_status', 'created_at'],
+                name='message_delivery_idx',
+            ),
         ]
 
     def __str__(self):
@@ -290,7 +307,10 @@ class ChatAttachment(models.Model):
         related_name='attachments',
     )
     attachment_type = models.CharField(max_length=10, choices=ATTACHMENT_TYPE_CHOICES, default='file')
-    file = models.FileField(upload_to='chat_attachments/%Y/%m/%d/')
+    file = models.FileField(
+        upload_to='chat_attachments/%Y/%m/%d/',
+        validators=[validate_chat_attachment],
+    )
     original_filename = models.CharField(max_length=255, blank=True)
     file_size = models.PositiveIntegerField(null=True, blank=True, help_text="Taille en octets")
     mime_type = models.CharField(max_length=100, blank=True)
