@@ -60,4 +60,31 @@
     </div>
   </section>
 </div>
+
+<!-- Historique des litiges résolus et retraits -->
+<div class="flex flex-col lg:flex-row gap-6 mt-6">
+  <section class="flex-1 fq-card overflow-hidden">
+    <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Historique litiges résolus</h3></div>
+    <div class="fq-table-wrap custom-scrollbar">
+      <table class="fq-table" id="resolved-disputes-table">
+        <thead><tr><th>Mission</th><th>Client</th><th>Agent</th><th>Montant</th><th>Résolution</th><th>Date</th></tr></thead>
+        <tbody id="resolved-disputes-tbody">
+          <tr><td colspan="6" class="text-center py-8"><span class="fq-skeleton inline-block w-40 h-5"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="flex-1 fq-card overflow-hidden">
+    <div class="px-6 py-4 border-b"><h3 class="fq-section-title">Historique des retraits</h3></div>
+    <div class="fq-table-wrap custom-scrollbar">
+      <table class="fq-table" id="payouts-history-table">
+        <thead><tr><th>ID</th><th>Agent</th><th>Manager</th><th class="text-right">Montant</th><th>Statut</th><th>Date</th></tr></thead>
+        <tbody id="payouts-history-tbody">
+          <tr><td colspan="6" class="text-center py-8"><span class="fq-skeleton inline-block w-40 h-5"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 {% endblock %}

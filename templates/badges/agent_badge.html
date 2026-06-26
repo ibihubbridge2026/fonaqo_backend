@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* Configuration PVC ID-1 Standard */
+        @page {
+            size: 54mm 86mm;
+            margin: 0;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Helvetica', 'Arial', sans-serif;
+        }
+        body {
+            width: 54mm;
+            height: 86mm;
+            background: #ffffff;
+            overflow: hidden;
+        }
+        .badge {
+            width: 54mm;
+            height: 86mm;
+            position: relative;
+            background: #ffffff;
+        }
+
+        /* 1. Nouvel En-tête utilisant l'image racine officielle */
+        .top-section {
+            width: 54mm;
+            height: 31mm;
+            position: relative;
+            background: #000000;
+            overflow: hidden;
+            z-index: 5;
+        }
+        .header-main-img {
+            width: 100%;
+            height: 100%;
+            min-width: 100%;
+            min-height: 100%;
+            object-fit: cover;
+            object-position: center center;
+            display: block;
+            z-index: 5;
+        }
+
+        /* Courbe jaune continue collée à l'en-tête noir */
+        .wave-accent {
+            position: absolute;
+            bottom: -8mm;
+            left: -15%;
+            width: 130%;
+            height: 16mm;
+            background: #f8c400;
+            border-radius: 50%;
+            z-index: 10;
+        }
+        .top-section::after {
+            content: "";
+            position: absolute;
+            bottom: -10mm;
+            left: -15%;
+            width: 130%;
+            height: 14mm;
+            background: #ffffff;
+            border-radius: 50%;
+            z-index: 3;
+        }
+
+        /* Badge "Agent Interne" Premium Conditionnel - Design Élégant à Gauche */
+        .internal-badge {
+            position: absolute;
+            left: 2mm;
+            top: 2mm;
+            display: flex;
+            align-items: center;
+            gap: 1mm;
+            z-index: 50;
+        }
+        .internal-badge .badge-circle {
+            width: 5mm;
+            height: 5mm;
+            background: #f8c400;
+            border: 0.5mm solid #111111;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0.5mm 1mm rgba(0,0,0,0.2);
+        }
+        .internal-badge .badge-icon {
+            font-size: 3.5pt;
+            color: #111111;
+            font-weight: bold;
+        }
+        .internal-badge .badge-label {
+            background: #111111;
+            color: #f8c400;
+            padding: 0.8mm 2mm;
+            border-radius: 1mm;
+            font-size: 3.5pt;
+            font-weight: 900;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            box-shadow: 0 0.5mm 1mm rgba(0,0,0,0.2);
+        }
+        .ribbon .stars { font-size: 3.5pt; color: #111111; }
+
+        /* 2. Bloc Photo Central Épuré (Sans Badge de Certification) */
+        .photo-wrapper {
+            position: absolute;
+            bottom: -11mm;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20mm;
+            height: 20mm;   
+            z-index: 20;
+            background: #1a1a1a;
+        }
+        .photo {
+            width: 24mm;
+            height: 24mm;
+            border-radius: 50%;
+            border: 1.2mm solid #f8c400;
+            object-fit: cover;
+            object-position: center center;
+            display: block;
+            background: #1a1a1a;
+        }
+
+        /* 3. Zone de Contenu */
+        .content {
+            padding-top: 8mm;
+            text-align: center;
+            position: relative;
+            z-index: 10;
+        }
+        .content h2 {
+            font-size: 11pt;
+            font-weight: bold;
+            color: #111111;
+            margin-top: 3mm;
+            margin-bottom: 1mm;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .role-pill {
+            background: #111111;
+            color: #f8c400;
+            padding: 2mm 5mm;
+            border-radius: 5mm;
+            font-weight: bold;
+            font-size: 6pt;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 5mm;
+            height: 5mm;
+            line-height: 5mm;
+        }
+
+        /* 4. Grille d'Infos Aérée avec Icônes Réduites */
+        .info-table {
+            width: 86%;
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
+        .info-table tr {
+            /* Donne de l'espace entre les lignes d'icônes */
+            border-bottom: 0.2mm solid #f2f2f2;
+            height: 6mm;
+        }
+        .info-table td {
+            vertical-align: middle;
+            padding: 0 0 0 2mm;
+        }
+        .icon-box {
+            width: 4mm;
+            height: 4mm;
+            background: #111111;
+            border-radius: 0.8mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            top: -0.5mm;
+        }
+        .icon-box img {
+            width: 2.2mm;
+            height: 2.2mm;
+        }
+        .label-text {
+            color: #444444;
+            font-weight: bold;
+            font-size: 6pt;
+            text-align: left;
+            padding-left: 2mm;
+            vertical-align: middle;
+        }
+        .value-text {
+            color: #111111;
+            font-weight: bold;
+            font-size: 6.8pt;
+            text-align: right;
+            vertical-align: middle;
+        }
+
+        /* 5. Zone Basse Alignée (Signature descendue au niveau du QR Code) */
+        .bottom-row {
+            width: 86%;
+            position: absolute;
+            bottom: 2.5mm;
+            left: 7%;
+            z-index: 15;
+        }
+        .bottom-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .bottom-table td { vertical-align: bottom; }
+        
+        .signature-area { 
+            text-align: left; 
+            width: 52%; 
+            padding-bottom: 0.5mm;
+        }
+        .signature-space { 
+            height: 8mm; 
+            width: 100%; 
+        } 
+        .signature-area small { 
+            color: #888888; 
+            font-size: 4pt; 
+            font-weight: bold; 
+            display: block;
+            border-top: 0.2mm solid #cccccc; /* Ligne horizontale de signature abaissée */
+            padding-top: 1mm;
+            letter-spacing: 0.2px;
+        }
+
+        .qr-area { text-align: right; width: 48%; }
+        .qr-code { width: 9.5mm; height: 9.5mm; display: block; margin-left: auto; margin-bottom: 0.5mm; }
+        .qr-area small { color: #111111; font-size: 4pt; font-weight: bold; display: block; letter-spacing: 0.1mm; }
+
+        /* 6. Footer Bas de Page */
+        .footer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 5mm;
+            background: #111111;
+            color: #ffffff;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 4.5pt;
+            font-weight: bold;
+            letter-spacing: 0.4px;
+            z-index: 30;
+        }
+    </style>
+</head>
+<body>
+
+<div class="badge">
+    {% if profile.is_internal %}
+    <div class="internal-badge">
+        <div class="badge-circle">
+            <span class="badge-icon">★</span>
+        </div>
+        <div class="badge-label">INTERNE</div>
+    </div>
+    {% endif %}
+
+    <div class="top-section">
+        <img src="/static/images/background.png" class="header-main-img" alt="FONAQO Header">
+        <div class="wave-accent"></div>
+
+        <div class="photo-wrapper">
+            <img src="{% if profile.badge_photo %}{{ profile.badge_photo.url }}{% elif profile.selfie_photo %}{{ profile.selfie_photo.url }}{% else %}/static/images/default_agent.jpg{% endif %}" class="photo">
+        </div>
+    </div>
+
+    <div class="content">
+        {% with full_name=user.get_full_name|default:"Nom de l'agent"|upper %}
+            {% if full_name|length > 24 %}
+                {% with parts=full_name.split %}
+                    {% if parts|length > 1 %}
+                        <h2>{{ parts.0 }} {% for part in parts|slice:"1:" %}{{ part|slice:":1" }}. {% endfor %}</h2>
+                    {% else %}
+                        <h2>{{ full_name|slice:":24" }}…</h2>
+                    {% endif %}
+                {% endwith %}
+            {% else %}
+                <h2>{{ full_name }}</h2>
+            {% endif %}
+        {% endwith %}
+        <div class="role-pill">AGENT DE TERRAIN</div>
+
+        <table class="info-table">
+            <tr>
+                <td style="width: 6mm;">
+                    <div class="icon-box">
+                        <img src="/static/images/icons/id_icon.png" alt="ID">
+                    </div>
+                </td>
+                <td class="label-text">ID AGENT</td>
+                <td class="value-text">{{ profile.agent_code|default:"AGT-00001" }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="icon-box">
+                        <img src="/static/images/icons/calendar_icon.png" alt="Date">
+                    </div>
+                </td>
+                <td class="label-text">INSCRIT DEPUIS</td>
+                <td class="value-text">{{ user.date_joined|date:"m / Y"|default:"06 / 2026" }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="bottom-row">
+        <table class="bottom-table">
+            <tr>
+                <td class="signature-area">
+                    <div class="signature-space"></div>
+                    <small>SIGNATURE DE L'AGENT</small>
+                </td>
+                <td class="qr-area">
+                    <img src="/api/v1/users/agent/{{ profile.agent_code|default:'AGT-00001' }}/qrcode/" class="qr-code">
+                    <small>VÉRIFIER CE BADGE</small>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="footer">
+        VOTRE CONFIANCE, NOTRE ENGAGEMENT.
+    </div>
+</div>
+
+</body>
+</html>

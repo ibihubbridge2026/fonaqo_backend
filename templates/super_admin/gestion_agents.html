@@ -21,7 +21,7 @@
   </div>
   <div class="fq-table-wrap custom-scrollbar">
     <table class="fq-table" id="agents-table">
-      <thead><tr><th>Code</th><th>Username</th><th>Nom</th><th>Téléphone</th><th>KYC</th><th>Badge</th><th class="text-right">Actions</th></tr></thead>
+      <thead><tr><th>Code</th><th>Username</th><th>Nom</th><th>Téléphone</th><th>KYC</th><th class="text-right">Actions</th></tr></thead>
       <tbody>
         {% for profile in agents %}
         <tr class="agent-row" data-agent-row="{{ profile.id }}" data-user-id="{{ profile.user.id }}"
@@ -37,7 +37,6 @@
           <td>{{ profile.user.get_full_name|default:"—" }}{% if profile.is_internal %} <span class="fq-badge fq-badge-completed">INTERNE</span>{% endif %}</td>
           <td class="mono">{{ profile.user.phone_number|default:"—" }}</td>
           <td><span data-kyc-badge class="fq-badge {% if profile.kyc_status == 'APPROVED' %}fq-badge-completed{% elif profile.kyc_status == 'REJECTED' %}fq-badge-cancelled{% else %}fq-badge-pending{% endif %}">{% if profile.kyc_status == 'APPROVED' %}Approuvé{% elif profile.kyc_status == 'REJECTED' %}Rejeté{% else %}En attente{% endif %}</span></td>
-          <td><span class="fq-badge fq-badge-default">{{ profile.badge_status }}</span></td>
           <td class="text-right">
             <div class="flex items-start justify-end gap-1 flex-wrap">
               <div class="flex flex-col items-center gap-0.5">
@@ -85,7 +84,7 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="7"><div class="fq-empty">Aucun agent.</div></td></tr>
+        <tr><td colspan="6"><div class="fq-empty">Aucun agent.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

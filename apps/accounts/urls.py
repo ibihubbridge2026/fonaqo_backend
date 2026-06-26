@@ -20,6 +20,7 @@ from .badge_views import (
     agent_badge_download_view,
     agent_badge_request_view,
     agent_badge_status_view,
+    agent_qrcode_view,
 )
 from .favorites_views import (
     client_favorites_list_view,
@@ -52,6 +53,7 @@ urlpatterns = [
     path('agent/badge/', agent_badge_status_view, name='agent-badge-status'),
     path('agent/badge/request/', agent_badge_request_view, name='agent-badge-request'),
     path('agent/badge/download/', agent_badge_download_view, name='agent-badge-download'),
+    path('agent/<str:agent_code>/qrcode/', agent_qrcode_view, name='agent-qrcode'),
     path('agents/top/', top_agents_view, name='top-agents'),
     path('client/rewards/', client_rewards_view, name='client-rewards'),
     path('client/rewards/catalog/', reward_catalog_view, name='reward-catalog'),

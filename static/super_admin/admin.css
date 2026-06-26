@@ -709,6 +709,15 @@ body.fq-sidebar-collapsed .fq-nav-chevron { display: none; }
 .fq-timeline-dot.warning { background: var(--fq-warning); }
 .fq-timeline-dot.critical { background: var(--fq-danger); }
 .fq-timeline-dot.success { background: var(--fq-success); }
+/* Contrôle des textes longs dans la timeline - anti-débordement */
+.fq-timeline-item p,
+.fq-timeline-item span,
+.fq-timeline-item code {
+  word-break: break-word;
+  word-wrap: break-word;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
 
 /* ─── Alerts panel ─── */
 .fq-alert-item {
@@ -1110,7 +1119,14 @@ body.fq-admin textarea.fq-input {
 @media (min-width: 1024px) { .fq-grid-3 { grid-template-columns: 2fr 1fr 1fr; } }
 .fq-grid-dashboard { display: grid; gap: 20px; }
 @media (min-width: 1280px) {
-  .fq-grid-dashboard { grid-template-columns: 1.4fr 1fr 0.8fr; }
+  .fq-grid-dashboard { grid-template-columns: 1.4fr 1.2fr 0.8fr; }
+}
+/* Fixer largeur bloc Activité live pour éviter débordement */
+@media (min-width: 1280px) {
+  .fq-grid-dashboard > div:nth-child(2) {
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 /* ─── Overlay mobile ─── */

@@ -1,7 +1,10 @@
 """API badge professionnel agent — paiement unique 1 000 FCFA."""
 
+import io
+
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
 from django.utils import timezone
@@ -137,4 +140,33 @@ def agent_badge_download_view(request):
     filename = f'badge-{profile.agent_code or request.user.username}.pdf'
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(['GET'])
+def agent_qrcode_view(request, agent_code):
+    """Génère un QR code PNG pointant vers la page de vérification du badge."""
+    try:
+        import qrcode as _qr
+    except ImportError:
+        return HttpResponse('QR code library not available', status=500)
+
+    base = getattr(settings, 'SITE_BASE_URL', 'https://fonaqo.com').rstrip('/')
+    verify_url = f'{base}/verify/badge/{agent_code}'
+
+    qr = _qr.QRCode(
+        error_correction=_qr.constants.ERROR_CORRECT_M,
+        box_size=4,
+        border=1,
+    )
+    qr.add_data(verify_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white')
+
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+
+    response = HttpResponse(buf, content_type='image/png')
+    response['Cache-Control'] = 'public, max-age=86400'
     return response

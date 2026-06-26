@@ -388,6 +388,11 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             'required': 'L\'email est obligatoire.'
         }
     )
+    profile_picture = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        help_text='⚠️ Attention : Cette photo sera utilisée comme photo de profil officielle partout sur l\'application ainsi que sur votre badge physique. Veuillez choisir une photo claire et professionnelle.'
+    )
     bio = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     class Meta:
